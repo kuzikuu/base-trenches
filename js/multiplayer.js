@@ -20,6 +20,7 @@ let pendingXp = 0;
 let chatCallbacks = [];
 let statusCallbacks = [];
 
+let heartbeat = null, heartbeatSock = null, replacedSock = false;
 let roster = [];
 let rosterCallbacks = [];
 // Save game: reconnect to the sector you saved in (falls back to 'main' if it fails once).
@@ -64,7 +65,13 @@ async function connect(profile) {
     console.log('[MP] Connected');
     connected = true;
     reconnectAttempts = 0;
+    replacedSock = false;
     notifyStatus('connected');
+    // Heartbeat: the room auto-answers 'ping' without waking up and prunes sockets that go
+    // silent for 150 s, so a dead tab / dropped network never lingers in the roster.
+    if (heartbeat) clearInterval(heartbeat);
+    heartbeatSock = sock;
+    heartbeat = setInterval(() => { if (sock.readyState === WebSocket.OPEN) { try { sock.send('ping'); } catch (e) {} } }, 25000);
     
     // Send join message
     sock.send(JSON.stringify({
@@ -88,10 +95,14 @@ async function connect(profile) {
     }
   };
   
-  sock.onclose = () => {
+  sock.onclose = (ev) => {
+    if (sock === heartbeatSock) { clearInterval(heartbeat); heartbeat = null; heartbeatSock = null; }
     if (sock !== ws) return;
     console.log('[MP] Disconnected');
     connected = false;
+    // 4002: the server replaced this idle connection with a newer one of the same account
+    // (another tab / a reconnect). Do not fight it; reconnect only when this tab is used again.
+    if (ev && ev.code === 4002) { notifyStatus('offline'); replacedSock = true; return; }
     notifyStatus('disconnected');
     if (roomOverride && !playerId) roomOverride = null; // sector unreachable: next try uses 'main'
     scheduleReconnect();
@@ -192,6 +203,9 @@ function handleMessage(data) {
       playerCount = data.playerCount;
       recruitCount = data.recruitCount || 0;
       if (data.roster) { roster = data.roster; rosterCallbacks.forEach(cb => cb(roster)); }
+      // The server sends everyone it still counts (one per account, dead sockets pruned):
+      // forget anyone missing so duplicate / dropped sessions do not linger as ghosts.
+      { const live = new Set(data.players.map(p => p.id)); for (const id of [...players.keys()]) if (!live.has(id)) players.delete(id); }
       data.players.forEach(p => {
         if (p.id !== playerId) {
           const existing = players.get(p.id);
@@ -334,6 +348,17 @@ function onRoster(callback) {
 function isBlockDugByOthers(x, y) {
   return dugBlocks.has(`${x},${y}`);
 }
+
+// A tab whose connection was replaced by a newer one reconnects when it is used again.
+function resumeIfReplaced() {
+  if (!replacedSock || document.visibilityState === 'hidden') return;
+  replacedSock = false;
+  const profile = typeof RPG !== 'undefined' && RPG.getProfile();
+  if (profile) { reconnectAttempts = 0; connect(profile); }
+}
+document.addEventListener('visibilitychange', resumeIfReplaced);
+window.addEventListener('pointerdown', resumeIfReplaced, true);
+window.addEventListener('keydown', resumeIfReplaced, true);
 
 window.Multiplayer = {
   connect,

@@ -41,6 +41,7 @@ import {
   publicRecruit
 } from './lib/recruits.js';
 import { parseGeo, geoHeader, aggregateGeo } from './lib/geo.js';
+import { dedupePresence, socketsToReplace, STALE_MS, CLOSE_STALE, CLOSE_REPLACED } from './lib/presence.js';
 import { levelForDepth, LEVEL_DEPTH_M, MAX_LEVEL, killXp, bossXp, bossBand, inBossZone, elevatorStops, validElevatorStop } from './lib/levels.js';
 import { normalizeSkills, learn as learnSkill, validateSkills, skillPoints, spentPoints, RESPEC_COOLDOWN_MS } from './lib/skills.js';
 import { sanitizeSave, sanitizeEquipped, normalizeMeta, noteCredit, emptyMeta, deathCheckpoint, elevatorStart, SAVE_MIN_GAP_MS } from './lib/save.js';
@@ -71,7 +72,6 @@ const EVENTS_SHARD = 'calendar-1';
 const BROADCAST_INTERVAL_MS = 100;
 const CHAT_RATE_LIMIT_MS = 2000;
 const CHAT_MAX_LENGTH = 60;
-const IDLE_MS = 15_000;
 const BOT_PAUSE_IDLE_MS = 60_000; // recruits freeze when every human has been idle this long
 // Free-plan guard: estimated billed DO requests per room per UTC day (fetch = 1, incoming
 // WebSocket message = 1/20). Past this, recruits switch off in that room until the next UTC day.
@@ -213,6 +213,8 @@ export class TrenchRoom {
     this.raidSurvives = new Map(); // sessionId -> barrages survived since the last boss raid
     this.bossSpawns = new Map();   // sessionId -> { band, t } last Sandmaw spawn the room saw
     this.bossSlain = new Map();    // sessionId -> Set(bands) already paid this session
+    this.seenAt = new Map();       // sessionId -> last message time (memory only; heartbeats use the auto-response timestamp)
+    this.gone = new Set();         // sessionIds the room closed (stale / replaced) but the runtime still lists
     this.lastBroadcast = 0;
     this.seed = null;
     // NPC recruits live only in memory and only while at least one human is connected.
@@ -270,7 +272,8 @@ export class TrenchRoom {
     if (request.headers.get('Upgrade') === 'websocket') {
       // ROOM_CAP lets the preview worker raise the cap for load tests; prod uses the constant.
       const cap = Math.max(1, Math.min(1000, Number(this.env && this.env.ROOM_CAP) || MAX_PLAYERS_PER_ROOM));
-      if (this.state.getWebSockets().length >= cap) {
+      this.livePresence(); // prune dead sockets first so they do not hold room slots
+      if (this.state.getWebSockets().length - this.gone.size >= cap) {
         return new Response('Room full', { status: 503 });
       }
       const pair = new WebSocketPair();
@@ -321,23 +324,58 @@ export class TrenchRoom {
     };
   }
 
-  humanGeos() {
+  // ---- presence: one entry per person, dead sockets pruned (lib/presence.js) ----
+  socketEntries(excludeWs = null) {
     const out = [];
     for (const ws of this.state.getWebSockets()) {
-      const a = ws.deserializeAttachment();
-      if (a && a.playerId && !a.bot) out.push(a.geo || null);
+      if (ws === excludeWs) continue;
+      let a = null;
+      try { a = ws.deserializeAttachment(); } catch (e) {}
+      if (a && a.sessionId && this.gone.has(a.sessionId)) continue;
+      let autoTs = 0;
+      try { const d = this.state.getWebSocketAutoResponseTimestamp && this.state.getWebSocketAutoResponseTimestamp(ws); autoTs = d ? +d : 0; } catch (e) {}
+      const mem = a && a.sessionId ? this.seenAt.get(a.sessionId) || 0 : 0;
+      out.push({ ref: ws, a: a && mem > (a.lastSeen || 0) ? { ...a, lastSeen: mem } : a, autoTs });
     }
     return out;
   }
 
-  humanCount(excludeWs = null) {
-    let n = 0;
-    for (const ws of this.state.getWebSockets()) {
-      if (ws === excludeWs) continue;
-      const a = ws.deserializeAttachment();
-      if (a && a.playerId && !a.bot) n++;
+  // Deduped live humans (one per account). Closes dead sockets as a side effect.
+  livePresence(excludeWs = null, now = Date.now()) {
+    const entries = this.socketEntries(excludeWs);
+    const r = dedupePresence(entries, now);
+    for (const ws of r.stale) this.dropSocket(ws, CLOSE_STALE, 'stale');
+    // Sockets that never sent 'join' also hold a room slot; drop them once they go stale.
+    for (const e of entries) if (e.a && !e.a.playerId && now - Math.max(e.a.joined || 0, e.autoTs || 0) > STALE_MS) this.dropSocket(e.ref, CLOSE_STALE, 'stale');
+    return r.keep;
+  }
+
+  dropSocket(ws, code, reason) {
+    let a = null;
+    try { a = ws.deserializeAttachment(); } catch (e) {}
+    if (a && a.sessionId) {
+      if (this.gone.has(a.sessionId)) return;
+      this.gone.add(a.sessionId);
+      this.forgetSession(a.sessionId);
     }
-    return n;
+    try { ws.close(code, reason); } catch (e) {}
+    if (a && a.playerId) {
+      this.broadcast({ type: 'leave', playerId: a.playerId, playerCount: this.livePresence(ws).length }, ws);
+    }
+  }
+
+  forgetSession(id) {
+    this.xpWindows.delete(id); this.recentDigs.delete(id); this.raidSurvives.delete(id);
+    this.bossSpawns.delete(id); this.bossSlain.delete(id); this.seenAt.delete(id);
+  }
+
+  humanGeos() {
+    return this.livePresence().map(p => p.a.geo || null);
+  }
+
+  // Unique humans (accounts), not sockets: drives playerCount and the recruit ramp.
+  humanCount(excludeWs = null) {
+    return this.livePresence(excludeWs).length;
   }
 
   // ---- NPC recruits -------------------------------------------------------
@@ -427,10 +465,7 @@ export class TrenchRoom {
 
   lastHumanActivity() {
     let t = 0;
-    for (const ws of this.state.getWebSockets()) {
-      const a = ws.deserializeAttachment();
-      if (a && a.playerId && !a.bot) t = Math.max(t, a.lastUpdate || a.joined || 0);
-    }
+    for (const p of this.livePresence()) t = Math.max(t, p.a.lastUpdate || p.a.joined || 0);
     return t;
   }
 
@@ -451,6 +486,10 @@ export class TrenchRoom {
     try {
       const data = JSON.parse(message);
       const attachment = ws.deserializeAttachment() || {};
+      if (attachment.sessionId) {
+        if (this.gone.has(attachment.sessionId)) { try { ws.close(CLOSE_STALE, 'stale'); } catch (e) {} return; }
+        this.seenAt.set(attachment.sessionId, Date.now());
+      }
       this.countUnits(1 / 20);
       if (attachment.playerId) this.ensureBotTicker();
       switch (data.type) {
@@ -471,9 +510,10 @@ export class TrenchRoom {
 
   async webSocketClose(ws, code, reason) {
     const attachment = ws.deserializeAttachment() || {};
-    if (attachment.sessionId) { this.xpWindows.delete(attachment.sessionId); this.raidSurvives.delete(attachment.sessionId); this.bossSpawns.delete(attachment.sessionId); this.bossSlain.delete(attachment.sessionId); }
+    const already = attachment.sessionId && this.gone.has(attachment.sessionId);
+    if (attachment.sessionId) { this.forgetSession(attachment.sessionId); this.gone.delete(attachment.sessionId); }
     try { ws.close(code === 1005 ? 1000 : code, reason); } catch (e) {}
-    if (attachment.playerId) {
+    if (attachment.playerId && !already) {
       const playerCount = this.getActivePlayers(ws).length;
       this.broadcast({ type: 'leave', playerId: attachment.playerId, playerCount }, ws);
       if (this.humanCount(ws) === 0) this.stopBots(ws);
@@ -498,6 +538,9 @@ export class TrenchRoom {
     this.xpWindows.set(attachment.sessionId, createXpWindow());
     attachment.lastDepthAwarded = 0;
     ws.serializeAttachment(attachment);
+    // Same account reconnecting (new tab, network switch, sleep/wake): close its idle older
+    // sockets so the roster does not fill up with copies of one person.
+    for (const old of socketsToReplace(this.socketEntries(ws), attachment)) this.dropSocket(old, CLOSE_REPLACED, 'replaced');
 
     const players = this.getActivePlayers();
     ws.send(JSON.stringify({
@@ -704,11 +747,10 @@ export class TrenchRoom {
 
   getActivePlayers(excludeWs = null, now = Date.now()) {
     const players = [];
-    for (const ws of this.state.getWebSockets()) {
-      if (ws === excludeWs) continue;
-      const a = ws.deserializeAttachment();
-      if (a && a.playerId) {
-        const idle = !a.lastUpdate || (now - a.lastUpdate > IDLE_MS);
+    for (const p of this.livePresence(excludeWs, now)) {
+      const a = p.a;
+      {
+        const idle = p.idle;
         players.push({
           id: a.playerId,
           name: a.name,

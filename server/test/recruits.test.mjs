@@ -45,7 +45,7 @@ function fakeRoom(extraEnv = {}, init = { seed: 123 }) {
   return { room, sockets, calls };
 }
 async function joinHuman(ctx, name, geo) {
-  const ws = fakeWs({ sessionId: crypto.randomUUID(), verifiedProfileId: 'guest:00000000-0000-4000-8000-000000000000', joined: Date.now(), geo });
+  const ws = fakeWs({ sessionId: crypto.randomUUID(), verifiedProfileId: 'guest:' + crypto.randomUUID(), joined: Date.now(), geo });
   ctx.sockets.push(ws);
   await ctx.room.handleJoin(ws, { name }, ws.att);
   return ws;
