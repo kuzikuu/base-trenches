@@ -8,7 +8,7 @@
 // ============================================
 // Replace with your deployed worker URL, e.g.:
 // 'https://base-trenches-server.yourname.workers.dev'
-const DEFAULT_SERVER_URL = 'http://localhost:8787';
+const DEFAULT_SERVER_URL = 'https://base-trenches-server.YOURSUBDOMAIN.workers.dev';
 
 window.BT_CONFIG = {
   // Multiplayer server URL (can be overridden by setting window.BT_SERVER_URL before loading)
