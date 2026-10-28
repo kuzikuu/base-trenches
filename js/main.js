@@ -45,9 +45,14 @@ function onOver(s){
 }
 Game.init($("#game"),{onHud,onHit,onOver,onHint:t=>hint(t),onOpen:id=>openPanel(id)});
 
-function start(){
+async function start(){
   $("#title").classList.add("hidden");$("#over").classList.add("hidden");$("#hud").classList.remove("hidden");
   if(touch)$("#touch").classList.remove("hidden");
+  // Wait briefly for multiplayer seed so first run is shared (up to 1.5s)
+  if(Multiplayer.connected&&Multiplayer.worldSeed==null){
+    const deadline=Date.now()+1500;
+    while(Date.now()<deadline&&Multiplayer.worldSeed==null)await new Promise(r=>setTimeout(r,50));
+  }
   Game.start();
   updateRpgHud();
   if(!touch)hint("SPACE TO DIG · ARROWS TO MOVE · ↓+SPACE DIGS DOWN",4500);else hint("⛏ DIG · ▼+⛏ DIGS DOWN",4000);
@@ -105,6 +110,25 @@ Multiplayer.onStatus((status)=>{
   }else if(status==='offline'||status==='disconnected'){
     badge.classList.remove("hidden");
   }
+});
+
+// Chat input + emotes
+let lastChatSent=0;
+const CHAT_RATE_LIMIT=2000; // respect server 2s limit
+function sendChat(text){
+  if(!text||!text.trim())return;
+  const now=Date.now();
+  if(now-lastChatSent<CHAT_RATE_LIMIT){hint("Wait before sending again",1500);return}
+  if(!Multiplayer.connected){hint("Offline - can't send chat",1500);return}
+  Multiplayer.sendChat(text.trim());
+  lastChatSent=now;
+  Haptics.selection();
+  $("#chatInput").value="";
+}
+$("#chatSend").onclick=()=>sendChat($("#chatInput").value);
+$("#chatInput").onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();sendChat($("#chatInput").value)}};
+$$(".chat-emotes button").forEach(btn=>{
+  btn.onclick=()=>sendChat(btn.dataset.emote);
 });
 
 // panels

@@ -60,9 +60,19 @@
     <div class="hudleft">
       <div class="level" id="level">LV 1</div>
       <div class="xpbar"><span id="xpfill"></span></div>
-      <div class="online" id="online"><span id="onlineCount">0</span> ONLINE</div>
+      <div class="online-pill" id="online"><span id="onlineCount">0</span> ONLINE</div>
     </div>
     <div id="offlineBadge" class="offline-badge hidden">OFFLINE TRENCH</div>
+    <div id="chatBox" class="chat-box">
+      <div class="chat-emotes">
+        <button data-emote="POWER OF 9" aria-label="Power of 9">⚡9</button>
+        <button data-emote="MANIFESTING 589X" aria-label="Manifesting">🎯</button>
+        <button data-emote="LFG" aria-label="LFG">🚀</button>
+        <button data-emote="GM" aria-label="GM">☀️</button>
+      </div>
+      <input type="text" id="chatInput" maxlength="60" placeholder="Say something..." autocomplete="off">
+      <button id="chatSend" aria-label="Send">↵</button>
+    </div>
   </div>
   <div id="hint" class="hint hidden"></div>
 

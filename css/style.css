@@ -225,8 +225,6 @@ a{color:var(--blue)}
 .level{font-family:"PS2P";font-size:11px;background:#fff;border:2px solid var(--blue);padding:4px 6px}
 .xpbar{width:80px;height:8px;border:2px solid var(--blue);background:#fff}
 .xpbar span{display:block;height:100%;width:0;background:var(--blue);transition:width .3s}
-.online{font-family:"PS2P";font-size:8px;color:var(--blue)}
-.online span{color:var(--g)}
 .offline-badge{position:absolute;top:10px;left:50%;transform:translateX(-50%);background:var(--m);color:#fff;font-family:"PS2P";font-size:9px;padding:5px 10px;animation:pulse 2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
 
@@ -295,3 +293,26 @@ body{padding-top:var(--safe-top);padding-bottom:var(--safe-bottom);padding-left:
 }
 /* level/XP/online HUD sits under the lives bar (bottom-left collided with the ticker on desktop and the d-pad on touch) */
 .hudleft{bottom:auto;top:62px;left:12px}
+
+/* Online count as a solid pill (readable on desktop) */
+.online-pill{font-family:"PS2P";font-size:9px;background:#fff;border:2px solid var(--blue);padding:3px 6px;color:var(--blue)}
+.online-pill span{color:var(--g)}
+
+/* Chat input box */
+.chat-box{position:absolute;bottom:40px;right:12px;display:flex;gap:4px;align-items:center;pointer-events:auto}
+.chat-emotes{display:flex;gap:2px}
+.chat-emotes button{font-size:14px;width:28px;height:28px;border:2px solid var(--blue);background:#fff;cursor:pointer;padding:0}
+.chat-emotes button:hover{background:var(--blue);color:#fff}
+.chat-emotes button:active{transform:scale(.95)}
+#chatInput{font-family:"PS2P";font-size:9px;width:100px;height:28px;border:2px solid var(--blue);padding:0 6px;outline:none}
+#chatInput:focus{box-shadow:0 0 0 2px rgba(0,82,255,.3)}
+#chatSend{font-family:"PS2P";font-size:11px;width:28px;height:28px;border:2px solid var(--blue);background:var(--blue);color:#fff;cursor:pointer;padding:0}
+#chatSend:hover{background:#003acc}
+#chatSend:active{transform:scale(.95)}
+@media (max-width:560px){
+  .chat-box{bottom:110px;right:8px;flex-direction:column;align-items:flex-end}
+  .chat-emotes{order:2}
+  #chatInput{width:90px;font-size:8px}
+  .chat-emotes button{width:24px;height:24px;font-size:12px}
+  #chatSend{width:24px;height:24px;font-size:9px}
+}
