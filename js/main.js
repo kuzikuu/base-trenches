@@ -50,7 +50,9 @@ function onOver(s){
   const lvl=profile?` · LEVEL ${profile.level}`:'';
   $("#overStats").innerHTML=`MULTIPLIER <b>x${s.mult.toFixed(2)}</b><br>DEPTH ${s.depth}M · GEMS ${s.gems} · DIGS ${s.digs||0}${lvl}<br>BEST x${(+s.best).toFixed(2)} · GOAL 589x`;
   $("#over").classList.remove("hidden");
-  $("#checkpointBtn").classList.add("hidden");$("#overSave").classList.add("hidden");
+  $("#checkpointBtn").classList.add("hidden");$("#overSave").classList.add("hidden");$("#overSave").dataset.cta="";
+  if(isGuest()){const o=$("#overSave");o.dataset.cta="1";
+    o.innerHTML='Guest run. Sign in to keep your XP and get on the RANKS.<br><button type="button" class="cta-signin" data-signin>SIGN IN TO SAVE + RANK</button>';o.classList.remove("hidden")}
   lastStats=s;
   if(typeof BTSave!=='undefined')BTSave.onDeath();
 }
@@ -102,7 +104,7 @@ if(typeof BTSave!=='undefined'){
     if(ev==='error'){
       const m={no_run:"Start a run first",login_required:"Log in to save",too_soon:"Saved a moment ago",offline:"Save failed: server unreachable",levels_locked:"Deeper levels are not open yet"};
       toast(m[data]||"Save failed ("+data+")");return}
-    if(ev==='saved'){
+    if(ev==='saved'){$("#overSave").dataset.cta="";
       const sv=data.save;paintContinue(sv);
       if(Game.mode==="over"){
         if(sv&&sv.checkpoint){$("#checkpointBtn").classList.remove("hidden");$("#checkpointBtn").textContent="▶ CHECKPOINT · LV "+sv.level;
@@ -131,7 +133,7 @@ function toggleHaptics(){const h=Haptics.toggle();$("#hapticBtn").textContent=h?
 $("#hapticBtn").textContent=Haptics.enabled?"VIB ON":"VIB OFF";$("#hapticBtn").onclick=toggleHaptics;
 
 // menu
-$("#menuBtn").onclick=()=>{$("#menu").classList.toggle("open");Haptics.selection()};
+$("#menuBtn").onclick=()=>{const o=$("#menu").classList.toggle("open");$("#menuBtn").setAttribute("aria-expanded",o?"true":"false");Haptics.selection()};
 
 // share button
 $("#shareBtn").onclick=()=>{if(lastStats)MiniApp.shareScore(lastStats.mult,lastStats.depth);Haptics.selection()};
@@ -570,6 +572,7 @@ Promise.all([
       $("#greeting").textContent="WELCOME "+profile.name.toUpperCase();
     }
     updateRpgHud();
+    if(typeof BTPrivy!=='undefined'&&BTPrivy.enabled())paintGuestCta();
     const h=location.hash.slice(1);if(TITLES[h])openPanel(h);else if(h==="play")start();
   },450);
 });
@@ -588,8 +591,9 @@ function renderAccountChip(snap){
   const b=$("#loginBtn");if(!b)return;
   if(!snap||!snap.did){
     b.classList.remove("acct-chip","signed-in");b.classList.add("guest-chip");
-    b.innerHTML='<span class="chip-guest">GUEST</span><span class="chip-cta">SIGN IN</span>';
-    b.setAttribute("aria-label","Guest. Sign in");b.title="Playing as guest. Sign in to keep your XP";
+    b.innerHTML='<span class="chip-guest">GUEST</span> <span class="chip-cta">SIGN IN</span>';
+    b.removeAttribute("aria-label");b.title="Playing as guest. Sign in to keep your XP";
+    paintGuestCta(true);
     return;
   }
   const ic=BTPrivy.methodIcon(snap.method)||"✓",label=BTPrivy.methodLabel(snap.method)||"Privy";
@@ -597,8 +601,27 @@ function renderAccountChip(snap){
   const av=snap.avatar?`<img src="${escHtml(snap.avatar)}" alt="" referrerpolicy="no-referrer">`:`<i>${escHtml(name.replace(/^@/,"").slice(0,1).toUpperCase())}</i>`;
   b.classList.remove("guest-chip");b.classList.add("acct-chip","signed-in");
   b.innerHTML=`<span class="chip-av">${av}</span><span class="chip-name">${escHtml(name)}</span><span class="chip-m" title="${escHtml(label)}">${escHtml(ic)}</span>${snap.wallet?`<span class="chip-w">${escHtml(shortWallet(snap.wallet))}</span>`:""}`;
-  b.setAttribute("aria-label",`Signed in as ${name} with ${label}. Open account`);b.title=`Signed in as ${name} · ${label}`;
+  b.removeAttribute("aria-label");b.title=`Signed in as ${name} · ${label}. Open account`;
+  paintGuestCta(false);
 }
+// Guest call to action: SIGN IN TO SAVE + RANK under START DIGGING and on the game-over screen.
+// Farcaster mini-app players (fid:) already have an account, so they never see it.
+function isGuest(){return typeof BTPrivy!=='undefined'&&BTPrivy.enabled()&&!RPG.isLoggedIn()&&!(BTPrivy.snapshot().did)}
+function paintGuestCta(guest){
+  if(guest!==false)guest=isGuest();
+  const h=$("#homeSignin");if(h)h.classList.toggle("hidden",!guest);
+  const o=$("#overSave");if(o&&o.dataset.cta==="1"&&!guest){o.classList.add("hidden");o.dataset.cta=""}
+}
+document.addEventListener("click",e=>{
+  const t=e.target.closest&&e.target.closest("[data-signin]");
+  if(t&&typeof BTPrivy!=='undefined'){e.preventDefault();Haptics.selection();BTPrivy.show();return}
+  // Telegram / X links: open through the host inside a mini app (Telegram, Farcaster / Base App)
+  const a=e.target.closest&&e.target.closest("a[data-ext]");
+  if(a){
+    if(typeof BTTelegram!=='undefined'&&BTTelegram.isMiniApp()&&BTTelegram.openLink(a.href)){e.preventDefault();return}
+    if(MiniApp.isInHost&&MiniApp.openUrl&&MiniApp.openUrl(a.href)){e.preventDefault();return}
+  }
+});
 if(typeof BTPrivy!=='undefined'&&BTPrivy.enabled()){
   $("#loginBtn").classList.remove("hidden");
   renderAccountChip(null);

@@ -18,7 +18,18 @@
 /screens/*
   Cache-Control: public, max-age=31536000, immutable
 
-# JS/CSS - medium cache
+# Content-hashed vendor bundles (js/vendor/privy-sdk-<ver>.<hash>.js) and fonts - immutable
+/js/vendor/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/favicon.ico
+  Cache-Control: public, max-age=604800
+
+/manifest.json
+  Content-Type: application/manifest+json
+  Cache-Control: public, max-age=3600
+
+# JS/CSS - medium cache (index.html pins ?v=prNN on every file)
 /js/*
   Cache-Control: public, max-age=3600, must-revalidate
 

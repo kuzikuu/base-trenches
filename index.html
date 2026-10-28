@@ -4,21 +4,34 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <title>BASE TRENCHES · POWER OF 9</title>
-<meta name="description" content="Base Trenches: a meme community from the Base trenches. Power of 9. Manifesting 589x. Dig the trench, dodge the bullets, find the diamonds.">
-<meta property="og:title" content="BASE TRENCHES · POWER OF 9">
-<meta property="og:description" content="9 tags powers it up. 5 comments, 8 RTs, 9 likes pins it. Manifesting 589x.">
+<meta name="description" content="Base Trenches is a free WW1 trench-digging multiplayer game on Base. Dig with other trenchers, dodge the barrages, find gems and climb the Power of 9 ranks. No token, no wallet needed to play.">
+<meta property="og:title" content="Base Trenches · Power of 9: a free WW1 trench-digging game on Base">
+<meta property="og:description" content="A free WW1 trench-digging multiplayer game on Base. Dig with other trenchers, dodge the barrages, find gems, top the Power of 9 ranks. No token. Play in your browser.">
 <link rel="canonical" href="https://powerof9base.com/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Base Trenches">
 <meta property="og:image" content="https://powerof9base.com/screens/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Base Trenches: pixel-art trench digging game, Power of 9">
 <meta property="og:url" content="https://powerof9base.com/">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Base Trenches · Power of 9: a free WW1 trench-digging game on Base">
+<meta name="twitter:description" content="A free WW1 trench-digging multiplayer game on Base. Dig, dodge the barrages, find gems, top the Power of 9 ranks. No token.">
+<meta name="twitter:site" content="@powerof9base">
 <meta name="twitter:image" content="https://powerof9base.com/screens/og.png">
 <meta name="theme-color" content="#0052ff">
 <!-- Farcaster Mini App embed metadata -->
 <meta name="fc:miniapp" content='{"version":"1","imageUrl":"https://powerof9base.com/screens/og.png","button":{"title":"⛏ Start digging","action":{"type":"launch_miniapp","name":"Base Trenches","url":"https://powerof9base.com/","splashImageUrl":"https://powerof9base.com/assets/splash.png","splashBackgroundColor":"#ffffff"}}}'>
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="css/style.css?v=pr12">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="manifest" href="manifest.json">
+<link rel="preconnect" href="https://base-trenches-server.base-trenches.workers.dev" crossorigin>
+<link rel="preconnect" href="https://base-trenches-bot.base-trenches.workers.dev" crossorigin>
+<link rel="preload" href="assets/fonts/PressStart2P-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/VT323-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="css/style.css?v=pr13">
 <style>:root{--safe-top:0px;--safe-bottom:0px;--safe-left:0px;--safe-right:0px}</style>
 </head>
 <body>
@@ -47,10 +60,10 @@
     <a href="#about" data-nav="about">ABOUT</a>
   </nav>
   <div class="tools">
-    <button id="loginBtn" class="iconbtn hidden" aria-label="Sign in">LOGIN</button>
-    <button id="muteBtn" class="iconbtn" aria-label="Toggle sound" title="Sound (M)">SND ON</button>
-    <button id="hapticBtn" class="iconbtn" aria-label="Toggle haptics" title="Haptics">VIB ON</button>
-    <button id="menuBtn" class="iconbtn only-mobile" aria-label="Menu">MENU</button>
+    <button id="loginBtn" class="iconbtn hidden" title="Sign in">SIGN IN</button>
+    <button id="muteBtn" class="iconbtn" title="Sound (M)">SND ON</button>
+    <button id="hapticBtn" class="iconbtn" title="Haptics">VIB ON</button>
+    <button id="menuBtn" class="iconbtn only-mobile" aria-expanded="false" aria-controls="menu">MENU</button>
   </div>
 </header>
 
@@ -87,20 +100,23 @@
         <button data-emote="LFG" aria-label="LFG"><span class="emote-icon">🚀</span><span class="emote-text">LFG</span></button>
         <button data-emote="GM" aria-label="GM"><span class="emote-icon">☀️</span><span class="emote-text">GM</span></button>
       </div>
-      <input type="text" id="chatInput" maxlength="60" placeholder="Say..." autocomplete="off">
-      <button id="chatSend" aria-label="Send">↵</button>
+      <div class="chat-input-row">
+        <input type="text" id="chatInput" maxlength="60" placeholder="Say..." autocomplete="off" aria-label="Chat message">
+        <button id="chatSend" aria-label="Send">↵</button>
+      </div>
     </div>
   </div>
   <div id="hint" class="hint hidden"></div>
 
   <!-- TITLE -->
   <section id="title" class="screen">
-    <canvas id="heroAxe" width="300" height="300"></canvas>
+    <canvas id="heroAxe" width="300" height="300" aria-hidden="true"></canvas>
     <div class="dotmatrix kicker" id="greeting">TRENCHER PROGRAM</div>
     <h1 class="dotmatrix huge">BASE<br>TRENCHES</h1>
     <div class="tag">POWER OF 9 <span>·</span> MANIFESTING 589x</div>
     <button class="bigbtn hidden" id="continueBtn">▶ CONTINUE</button>
     <button class="bigbtn" id="startBtn">▶ START DIGGING</button>
+    <button type="button" class="cta-signin" id="homeSignin" data-signin>SIGN IN TO SAVE + RANK</button>
     <button class="bigbtn ghost" id="elevBtn">⇅ ELEVATOR</button>
     <div class="home-online" id="homeOnline">TRENCH QUIET</div>
     <div class="keys only-desktop">←→ / A D MOVE · ↑ / W JUMP+CLIMB · ↓ / S AIM DOWN · SPACE DIG · E ENTER BUNKER / LIFT · T TELEPORT UP · F FORTIFY · G WORLD MAP</div>
@@ -108,6 +124,7 @@
     <div class="quick">
       <button data-nav="hot">HOT LIST</button><button data-nav="calls">PREVIOUS CALLS</button><button data-nav="callers">CALLERS</button><button data-nav="about">HOW IT WORKS</button><button data-nav="world">◉ WORLD MAP</button>
     </div>
+    <div class="social-row"><a class="soc" href="https://t.me/powerof9base" target="_blank" rel="noopener" data-ext>JOIN TELEGRAM</a><a class="soc" href="https://x.com/powerof9base" target="_blank" rel="noopener" data-ext>FOLLOW @POWEROF9BASE</a></div>
   </section>
 
   <!-- GAME OVER -->
@@ -122,7 +139,8 @@
       <button class="bigbtn ghost" id="overElevBtn">⇅ ELEVATOR</button>
       <button class="bigbtn ghost" id="shareBtn">↗ SHARE</button>
     </div>
-    <div class="keys">PRESS SPACE / ENTER TO RETRY</div>
+    <div class="social-row"><a class="soc" href="https://t.me/powerof9base" target="_blank" rel="noopener" data-ext>JOIN TELEGRAM</a><a class="soc" href="https://x.com/powerof9base" target="_blank" rel="noopener" data-ext>FOLLOW @POWEROF9BASE</a></div>
+    <div class="keys only-desktop">PRESS SPACE / ENTER TO RETRY</div>
   </section>
 
   <!-- TOUCH -->
@@ -159,29 +177,29 @@
   </div>
 </div>
 
-<!-- Farcaster Mini App SDK (loaded before app scripts) -->
-<script src="https://cdn.jsdelivr.net/npm/@farcaster/miniapp-sdk@0.3/dist/index.min.js"></script>
-<script src="js/font.js?v=pr12"></script>
-<script src="js/audio.js?v=pr12"></script>
-<script src="js/config.js?v=pr12"></script>
-<script src="js/haptics.js?v=pr12"></script>
-<script src="js/miniapp.js?v=pr12"></script>
-<script src="js/telegram.js?v=pr12"></script>
-<script src="js/levels.js?v=pr12"></script>
-<script src="js/skills.js?v=pr12"></script>
-<script src="js/power9.js?v=pr12"></script>
-<script src="js/campaign.js?v=pr12"></script>
-<script src="js/privy.js?v=pr12"></script>
-<script src="js/events-ui.js?v=pr12"></script>
-<script src="js/worldmap.js?v=pr12"></script>
-<script src="js/rpg.js?v=pr12"></script>
-<script src="js/multiplayer.js?v=pr12"></script>
-<script src="js/pickaxe.js?v=pr12"></script>
-<script src="js/data.js?v=pr12"></script>
-<script src="js/game.js?v=pr12"></script>
-<script src="js/pulse-ui.js?v=pr12"></script>
-<script src="js/save.js?v=pr12"></script>
-<script src="js/skilltree.js?v=pr12"></script>
-<script src="js/main.js?v=pr12"></script>
+<!-- Farcaster Mini App SDK: loaded by js/miniapp.js only inside a mini-app host. App scripts are
+     deferred (run in this order after parsing, so they never block first paint). -->
+<script src="js/font.js?v=pr13" defer></script>
+<script src="js/audio.js?v=pr13" defer></script>
+<script src="js/config.js?v=pr13" defer></script>
+<script src="js/haptics.js?v=pr13" defer></script>
+<script src="js/miniapp.js?v=pr13" defer></script>
+<script src="js/telegram.js?v=pr13" defer></script>
+<script src="js/levels.js?v=pr13" defer></script>
+<script src="js/skills.js?v=pr13" defer></script>
+<script src="js/power9.js?v=pr13" defer></script>
+<script src="js/campaign.js?v=pr13" defer></script>
+<script src="js/privy.js?v=pr13" defer></script>
+<script src="js/events-ui.js?v=pr13" defer></script>
+<script src="js/worldmap.js?v=pr13" defer></script>
+<script src="js/rpg.js?v=pr13" defer></script>
+<script src="js/multiplayer.js?v=pr13" defer></script>
+<script src="js/pickaxe.js?v=pr13" defer></script>
+<script src="js/data.js?v=pr13" defer></script>
+<script src="js/game.js?v=pr13" defer></script>
+<script src="js/pulse-ui.js?v=pr13" defer></script>
+<script src="js/save.js?v=pr13" defer></script>
+<script src="js/skilltree.js?v=pr13" defer></script>
+<script src="js/main.js?v=pr13" defer></script>
 </body>
 </html>
