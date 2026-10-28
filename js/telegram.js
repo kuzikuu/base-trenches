@@ -61,7 +61,8 @@ function setup() {
   return true;
 }
 
-const ready = launchedFromTelegram()
+const launched = launchedFromTelegram();
+const ready = launched
   ? loadScript(SDK_URL).then(setup).catch(e => { console.warn('[Telegram]', e.message); return false; })
   : Promise.resolve(false);
 
@@ -97,6 +98,7 @@ function openLink(url) {
 
 window.BTTelegram = {
   ready,
+  launched,
   isMiniApp: () => inMiniApp,
   webApp: () => webApp,
   webAppData,

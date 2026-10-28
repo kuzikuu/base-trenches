@@ -2,7 +2,12 @@
 (function(){
 "use strict";
 
+// Self-hosted, esbuild-bundled @privy-io/js-sdk-core@0.79.1 (one file, one viem version; built by
+// tools/build-privy.mjs). The CDN builds are fallbacks only. The SDK is loaded lazily: on a Sign in
+// tap, or on idle when this browser already has a Privy session / OAuth callback / Telegram launch.
+const SDK_LOCAL = (window.BT_CONFIG && BT_CONFIG.privySdk) || 'js/vendor/privy-sdk-0.79.1.1fa2d3cd12.js';
 const CDN = [
+  SDK_LOCAL,
   'https://esm.sh/@privy-io/js-sdk-core@0.79.1',
   'https://cdn.jsdelivr.net/npm/@privy-io/js-sdk-core@0.79.1/+esm'
 ];
@@ -126,19 +131,58 @@ function shortAddr(a) {
   return a.slice(0, 6) + '…' + a.slice(-4);
 }
 
-async function loadSdk() {
-  let last;
-  for (const url of CDN) {
-    try {
-      return await import(/* @vite-ignore */ url);
-    } catch (e) { last = e; }
-  }
-  throw last || new Error('Privy SDK failed to load');
+let sdkLoad = null;
+function loadSdk() {
+  if (sdkLoad) return sdkLoad;
+  sdkLoad = (async () => {
+    let last;
+    for (const url of CDN) {
+      try {
+        return await import(/* @vite-ignore */ new URL(url, document.baseURI).href);
+      } catch (e) { last = e; }
+    }
+    sdkLoad = null;
+    throw last || new Error('Privy SDK failed to load');
+  })();
+  return sdkLoad;
 }
 
-async function init() {
-  if (!enabled()) return null;
-  if (client) return client;
+// Does this browser need Privy at page load? Only when a session may already exist (Privy keeps
+// its tokens in localStorage under privy:*), an OAuth redirect is being finished, or the page was
+// launched inside Telegram (seamless login). Guests on a plain visit never download the SDK.
+function hasSavedSession() {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i) || '';
+      if (/^privy:(.+:)?(refresh_token|token)$/.test(k) || k === 'privy:active-user') return true;
+    }
+  } catch (e) {}
+  return false;
+}
+function shouldInitEarly() {
+  if (!enabled()) return false;
+  if (/[?&]privy_oauth_code=/.test(location.search)) return true;
+  if (typeof BTTelegram !== 'undefined' && BTTelegram.launched) return true;
+  return hasSavedSession();
+}
+// Init once the main thread is idle (bounded), so the SDK never competes with first paint.
+function initWhenIdle(timeout) {
+  return new Promise(resolve => {
+    const go = () => init().then(resolve, () => resolve(null));
+    if ('requestIdleCallback' in window) requestIdleCallback(go, { timeout: timeout || 1500 });
+    else setTimeout(go, 200);
+  });
+}
+
+let initing = null;
+function init() {
+  if (!enabled()) return Promise.resolve(null);
+  if (client && ready) return Promise.resolve(client);
+  if (!initing) initing = doInit().catch(e => { initing = null; client = null; throw e; });
+  return initing;
+}
+
+async function doInit() {
   const mod = await loadSdk();
   const Privy = mod.default || mod.Privy;
   const LocalStorage = mod.LocalStorage || (mod.default && mod.default.LocalStorage);
@@ -564,7 +608,8 @@ function _testLogin(u, method, event) {
 
 window.BTPrivy = {
   _testLogin,
-  enabled, init, show, hide, logout, getAccessToken, onChange,
+  enabled, init, initWhenIdle, shouldInitEarly, hasSavedSession, show, hide, logout, getAccessToken, onChange,
+  get loaded() { return !!client; },
   getUser: () => user,
   snapshot,
   shortAddr,

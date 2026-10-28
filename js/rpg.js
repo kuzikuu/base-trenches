@@ -109,8 +109,10 @@ async function loadProfile() {
     fcPfp = MiniApp.context.user.pfpUrl;
   }
 
-  if (typeof BTPrivy !== 'undefined' && BTPrivy.enabled()) {
-    try { await BTPrivy.init(); } catch (e) {}
+  // Privy is lazy: only a browser with a saved session (or an OAuth / Telegram launch) loads the
+  // SDK here, on idle. Guests load it when they tap Sign in.
+  if (typeof BTPrivy !== 'undefined' && BTPrivy.enabled() && BTPrivy.shouldInitEarly()) {
+    try { await BTPrivy.initWhenIdle(); } catch (e) {}
   }
   const pt = previewTestId();
   const privy = pt ? { did: 'did:privy:previewtest' + pt } : applyPrivyIdentity();
