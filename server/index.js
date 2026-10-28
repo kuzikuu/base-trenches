@@ -43,6 +43,8 @@ import {
 import { parseGeo, geoHeader, aggregateGeo } from './lib/geo.js';
 import { dedupePresence, socketsToReplace, STALE_MS, CLOSE_STALE, CLOSE_REPLACED } from './lib/presence.js';
 import { levelForDepth, LEVEL_DEPTH_M, MAX_LEVEL, killXp, bossXp, bossBand, inBossZone, elevatorStops, validElevatorStop } from './lib/levels.js';
+import { P9, P9_POINTS, COLLECTIBLE_KINDS, sanitizeTicker, noteStreak, perkCrossed, perkFor, manifestCrossed, publicName, isGuestId, boostActive } from './lib/power9.js';
+export { Pulse } from './lib/pulse.js';
 import { normalizeSkills, learn as learnSkill, validateSkills, skillPoints, spentPoints, RESPEC_COOLDOWN_MS } from './lib/skills.js';
 import { sanitizeSave, sanitizeEquipped, normalizeMeta, noteCredit, emptyMeta, deathCheckpoint, elevatorStart, SAVE_MIN_GAP_MS } from './lib/save.js';
 
@@ -69,6 +71,9 @@ let presenceCache = null;
 function shardName(i) { return i === 0 ? 'main' : `main-${i + 1}`; }
 const PROFILES_SHARD = 'season-1';
 const EVENTS_SHARD = 'calendar-1';
+const PULSE_SHARD = 'pulse-1';
+const PULSE_CACHE_MS = 5000;
+const pulseCache = new Map(); // path+query -> { at, body } per isolate (hot list / boards are read by every open tab)
 const BROADCAST_INTERVAL_MS = 100;
 const CHAT_RATE_LIMIT_MS = 2000;
 const CHAT_MAX_LENGTH = 60;
@@ -215,6 +220,11 @@ export class TrenchRoom {
     this.bossSlain = new Map();    // sessionId -> Set(bands) already paid this session
     this.seenAt = new Map();       // sessionId -> last message time (memory only; heartbeats use the auto-response timestamp)
     this.gone = new Set();         // sessionIds the room closed (stale / replaced) but the runtime still lists
+    // Power of 9: validated pickups / boss kills / milestones are noted here and batched to the
+    // Pulse DO every P9.FLUSH_MS (never one request per gem). Memory only: a lost batch is a few gems.
+    this.p9 = { counts: {}, players: new Map(), feed: [], dirty: false, lastFlush: 0, since: 0, live: null, boost: null };
+    this.p9Timer = null;
+    this.streaks = new Map();      // sessionId -> { n, t } 9-streak tracker
     this.lastBroadcast = 0;
     this.seed = null;
     // NPC recruits live only in memory and only while at least one human is connected.
@@ -366,7 +376,7 @@ export class TrenchRoom {
 
   forgetSession(id) {
     this.xpWindows.delete(id); this.recentDigs.delete(id); this.raidSurvives.delete(id);
-    this.bossSpawns.delete(id); this.bossSlain.delete(id); this.seenAt.delete(id);
+    this.bossSpawns.delete(id); this.bossSlain.delete(id); this.seenAt.delete(id); this.streaks.delete(id);
   }
 
   humanGeos() {
@@ -491,7 +501,7 @@ export class TrenchRoom {
         this.seenAt.set(attachment.sessionId, Date.now());
       }
       this.countUnits(1 / 20);
-      if (attachment.playerId) this.ensureBotTicker();
+      if (attachment.playerId) { this.ensureBotTicker(); this.ensurePulseTimer(); }
       switch (data.type) {
         case 'join': await this.handleJoin(ws, data, attachment); break;
         case 'state': await this.handleStateUpdate(ws, data, attachment); break;
@@ -552,9 +562,11 @@ export class TrenchRoom {
       dugBlocks: Array.from(this.dugBlocks.entries()).slice(-500),
       playerCount: players.length,
       recruitCount: this.bots.size,
-      roster: this.presence().players
+      roster: this.presence().players,
+      pulse: this.p9.live ? this.pulsePublic(this.p9.live, []) : null
     }));
     this.ensureBotTicker();
+    this.ensurePulseTimer(!this.p9.live);
     this.broadcast({
       type: 'join',
       playerId,
@@ -629,6 +641,7 @@ export class TrenchRoom {
       boss: this.bossSpawns.get(attachment.sessionId) || null,
       slain,
       now,
+      boost: boostActive(this.p9.boost, now),
       window: win
     };
   }
@@ -726,6 +739,8 @@ export class TrenchRoom {
     }));
     const credited = await res.json().catch(() => null);
     if (credited && credited.success) {
+      const prevLevel = attachment.level || 1;
+      try { this.p9Note(ws, attachment, event, credited, prevLevel, Date.now()); } catch (e) { console.error('p9 note', e); }
       if (credited.newLevel) attachment.level = credited.newLevel;
       ws.serializeAttachment(attachment);
       try { ws.send(JSON.stringify({ type: 'xp', ...credited })); } catch (e) {}
@@ -743,6 +758,103 @@ export class TrenchRoom {
         body: JSON.stringify({ profileId, name, xp, now: Date.now() })
       }));
     } catch (e) {}
+  }
+
+  // ---- Power of 9 -------------------------------------------------------------------
+  // Called only after Profiles credited a validated event, so nothing here trusts the client.
+  p9Note(ws, attachment, event, credited, prevLevel, now) {
+    const pid = attachment.verifiedProfileId;
+    if (!pid || isBotId(pid)) return;
+    const kind = event.kind;
+    const guest = isGuestId(pid);
+    const who = publicName(attachment.name, attachment.xHandle, guest);
+    const depth = depthFromY(attachment.y, TRENCH_FLOOR_TILE, TILE_SIZE);
+    const sid = attachment.sessionId;
+    const acc = this.p9;
+    const me = acc.players.get(pid) || { name: who, guest, depth: 0, gems: 0, boss: 0, p9: 0 };
+    const tell = (msg) => { try { ws.send(JSON.stringify({ type: 'p9', ...msg })); } catch (e) {} };
+    const special = (item) => { acc.feed.unshift(item); };
+    if (COLLECTIBLE_KINDS.includes(kind) && credited.added > 0) {
+      const t = kind === 'power' ? sanitizeTicker(event.ticker) : null;
+      const raw = kind === 'diamond' ? 'GEM' : kind === 'relic' ? 'RELIC' : (t ? 'P:' + t : 'POWER');
+      acc.counts[raw] = (acc.counts[raw] || 0) + 1;
+      if (kind !== 'relic') me.gems++;
+      me.p9 += P9_POINTS[kind] || 0;
+      const row = acc.feed.find(f => f.kind === 'dig' && f.who === who && f.key === raw);
+      if (row) { row.n++; row.depth = depth; } else acc.feed.push({ kind: 'dig', who, key: raw, n: 1, depth });
+      const s = noteStreak(this.streaks.get(sid), now);
+      this.streaks.set(sid, s.st);
+      if (s.hit) { me.p9 += P9_POINTS.streak; special({ kind: 'streak', who, depth }); tell({ kind: 'streak', n: s.st.n, points: P9_POINTS.streak }); }
+    }
+    if (kind === 'bossKill' && credited.added > 0) {
+      me.boss++; me.p9 += P9_POINTS.bossKill;
+      const sp = this.bossSpawns.get(sid);
+      special({ kind: 'boss', who, depth, boss: sp && sp.id === 'punk' ? 'BUILDER #001' : 'THE SANDMAW' });
+    }
+    const tier = credited.leveledUp ? perkCrossed(prevLevel, credited.newLevel) : 0;
+    if (tier) {
+      me.p9 += P9_POINTS.perk;
+      special({ kind: 'perk', who, level: credited.newLevel, tier });
+      tell({ kind: 'perk', tier, level: credited.newLevel, label: perkFor(credited.newLevel).label });
+    }
+    if (Number.isFinite(credited.bestDepth)) {
+      me.depth = Math.max(me.depth, credited.bestDepth);
+      const m = Number.isFinite(credited.prevBestDepth) ? manifestCrossed(credited.prevBestDepth, credited.bestDepth) : 0;
+      if (m) { me.p9 += P9_POINTS.manifest; special({ kind: 'manifest', who, depth: m }); tell({ kind: 'manifest', depth: m, points: P9_POINTS.manifest }); }
+    }
+    acc.players.set(pid, me);
+    acc.dirty = true;
+    this.ensurePulseTimer();
+  }
+
+  pulseStub() { return this.env.PULSE ? this.env.PULSE.get(this.env.PULSE.idFromName(PULSE_SHARD)) : null; }
+
+  // One setTimeout chain while humans are connected (like the recruits): flush when there is
+  // something to send, otherwise check in every HEARTBEAT_MS so the meter / boost stay current.
+  ensurePulseTimer(now = false) {
+    if (!this.pulseStub()) return;
+    if (now) { this.p9Flush(true).catch(() => {}); }
+    if (this.p9Timer) return;
+    this.p9Timer = setTimeout(async () => {
+      this.p9Timer = null;
+      const t = Date.now();
+      try { if (this.p9.dirty || t - this.p9.lastFlush >= P9.HEARTBEAT_MS) await this.p9Flush(); } catch (e) {}
+      if (this.humanCount() > 0) this.ensurePulseTimer();
+    }, P9.FLUSH_MS);
+  }
+
+  async p9Flush(force = false) {
+    const stub = this.pulseStub();
+    if (!stub || (this.p9.flushing && !force)) return;
+    const acc = this.p9;
+    const batch = {
+      room: this.roomName,
+      counts: acc.counts,
+      players: [...acc.players].map(([id, p]) => ({ id, ...p })),
+      feed: acc.feed.slice(0, P9.MAX_FEED_PER_BATCH)
+    };
+    acc.counts = {}; acc.players = new Map(); acc.feed = []; acc.dirty = false; acc.lastFlush = Date.now();
+    acc.flushing = true;
+    try {
+      const r = await stub.fetch(new Request(`http://internal/ingest?since=${acc.since}`, { method: 'POST', body: JSON.stringify(batch) }));
+      const live = await r.json();
+      this.applyPulse(live);
+    } finally { acc.flushing = false; }
+  }
+
+  pulsePublic(live, feed) {
+    return { meter: live.meter, max: live.max, boost: live.boost || null, lastCharge: live.lastCharge || [], feed, now: Date.now() };
+  }
+
+  applyPulse(live) {
+    if (!live || typeof live.meter !== 'number') return;
+    const prev = this.p9.live;
+    const feed = (live.feed || []).filter(f => f.seq > this.p9.since);
+    if (feed.length) this.p9.since = Math.max(...feed.map(f => f.seq));
+    this.p9.live = live;
+    this.p9.boost = live.boost || null;
+    const changed = !prev || prev.meter !== live.meter || JSON.stringify(prev.boost) !== JSON.stringify(live.boost) || feed.length;
+    if (changed) this.broadcast({ type: 'pulse', ...this.pulsePublic(live, feed) });
   }
 
   getActivePlayers(excludeWs = null, now = Date.now()) {
@@ -1091,6 +1203,7 @@ export class Profiles {
       titles,
       maxLevel,
       bestDepth: newBestDepth,
+      prevBestDepth: prevBest,
       bossFirst,
       skillPoints: skillPoints(newLevel, maxLevel)
     });
@@ -1588,6 +1701,13 @@ export default {
   }
 };
 
+// RANKS: guests show as anonymous (no name, handle, avatar or wallet).
+export function anonymizeBoard(body) {
+  if (!body || !Array.isArray(body.leaderboard)) return body;
+  return { ...body, leaderboard: body.leaderboard.map(r => r && typeof r.id === 'string' && r.id.startsWith('guest:')
+    ? { ...r, id: null, name: 'Anon trencher', x_handle: null, pfp: null, wallet: null, anon: true } : r) };
+}
+
 async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
   const origin = request.headers.get('Origin') || '';
@@ -1808,7 +1928,28 @@ async function handleRequest(request, env, ctx) {
     const t = url.searchParams.get('type');
     const type = t === 'depth' || t === 'squad' || t === 'level' ? t : 'xp';
     const response = await profilesStub(env).fetch(new Request(`http://internal/leaderboard?type=${type}`));
-    return json(await response.json(), 200, origin);
+    return json(anonymizeBoard(await response.json()), 200, origin);
+  }
+
+  // Power of 9: IN-GAME HOT LIST + feed + meter (GET /api/pulse) and the daily / weekly /
+  // all-time boards (GET /api/pulse/leaders?metric=depth|gems|boss|p9&period=day|week|all).
+  // Read-only from the outside; only rooms write (validated pickups, batched).
+  if (path === '/api/pulse' || path === '/api/pulse/leaders') {
+    if (request.method !== 'GET') return json({ error: 'method' }, 405, origin);
+    if (!env.PULSE) return json({ error: 'pulse_off' }, 503, origin);
+    const metric = url.searchParams.get('metric') || 'p9';
+    const period = url.searchParams.get('period') || 'day';
+    const key = path === '/api/pulse' ? '/state' : `/leaders?metric=${encodeURIComponent(metric.slice(0, 8))}&period=${encodeURIComponent(period.slice(0, 8))}`;
+    const now = Date.now();
+    let c = pulseCache.get(key);
+    if (!c || now - c.at > PULSE_CACHE_MS) {
+      const stub = env.PULSE.get(env.PULSE.idFromName(PULSE_SHARD));
+      c = { at: now, body: stub.fetch(new Request('http://internal' + key)).then(r => r.json()).catch((e) => { pulseCache.delete(key); throw e; }) };
+      pulseCache.set(key, c);
+      if (pulseCache.size > 40) pulseCache.delete(pulseCache.keys().next().value);
+    }
+    const body = await c.body;
+    return json(path === '/api/pulse' ? body : { ...body, rows: (body.rows || []).map((r, i) => ({ rank: i + 1, ...r })) }, 200, origin);
   }
 
   if (path === '/api/squads/leaderboard') {

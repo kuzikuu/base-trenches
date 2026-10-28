@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const SHARED = [
   { src: 'server/lib/levels.js', out: 'js/levels.js', global: 'BTLevels' },
-  { src: 'server/lib/skills.js', out: 'js/skills.js', global: 'BTSkills' }
+  { src: 'server/lib/skills.js', out: 'js/skills.js', global: 'BTSkills' },
+  { src: 'server/lib/power9.js', out: 'js/power9.js', global: 'BTPower9' }
 ];
 
 export function build(srcText, global, srcPath) {

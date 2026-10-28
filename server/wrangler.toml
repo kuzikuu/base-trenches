@@ -18,6 +18,11 @@ class_name = "Profiles"
 name = "EVENTS"
 class_name = "Events"
 
+# Power of 9: in-game hot list, feed, meter/boost and the daily/weekly/all-time boards (one instance).
+[[durable_objects.bindings]]
+name = "PULSE"
+class_name = "Pulse"
+
 # Migrations for SQLite-backed Durable Objects
 [[migrations]]
 tag = "v1"
@@ -28,6 +33,10 @@ new_sqlite_classes = ["TrenchRoom", "Profiles"]
 tag = "v2"
 new_sqlite_classes = ["Events"]
 
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["Pulse"]
+
 # Public Privy app id (same value as js/config.js BT_PRIVY_APP_ID). Empty = Privy auth off.
 # Server verifies Privy JWTs with the public JWKS only; the Privy app secret is NOT needed here.
 [vars]
@@ -35,6 +44,9 @@ PRIVY_APP_ID = "cmvrnxkao009s0hl58gy61ylg"
 # Endless levels switch. "0" = level 1 only (production until the launch announcement).
 # The preview worker runs with "1". Flip to "1" here (or in the dashboard) to open levels 2+.
 LEVELS_UNLOCKED = "0"
+# Power of 9 meter points per charge (default 99). Hot-list tickers come from the bot's /api/hot.
+# P9_METER_MAX = "99"
+# BOT_URL = "https://base-trenches-bot.base-trenches.workers.dev"
 # EVENTS_ADMIN_KEY is a secret:  wrangler secret put EVENTS_ADMIN_KEY
 
 # For local development

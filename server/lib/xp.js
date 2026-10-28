@@ -1,5 +1,6 @@
 // Server-authoritative XP: score validated events with per-kind and per-minute caps.
 // Used by TrenchRoom and by node tests. No Durable Object APIs here.
+import { P9 } from './power9.js';
 import { killXp, bossXp, inBossZone, bossBand, CRAWLER_MIN_DEPTH_M, BOSS_MIN_FIGHT_MS, bossFor, bossMinFightMs } from './levels.js';
 
 export const XP = {
@@ -67,15 +68,17 @@ export function countKind(win, kind) {
 }
 
 export function xpForKind(kind, extra = {}) {
+  // POWER OF 9 boost (server-wide, set by the room from the Pulse DO, never by the client).
+  const boost = extra.boost === true ? P9.BOOST_BONUS_XP : 0;
   switch (kind) {
     case 'dig': return XP.DIG;
-    case 'diamond': return XP.DIAMOND;
-    case 'power': return XP.POWER;
+    case 'diamond': return XP.DIAMOND + boost;
+    case 'power': return XP.POWER + boost;
     case 'depth': return XP.DEPTH;
     case 'dodge': return XP.DODGE;
     case 'hit': return XP.HIT;
     case 'survive': return XP.SURVIVE;
-    case 'relic': return XP.RELIC;
+    case 'relic': return XP.RELIC + boost;
     // Level comes from the room's verified position (and Profiles re-caps it by best depth).
     case 'kill': return killXp(extra.level || 1);
     case 'bossKill': return bossXp(extra.level || 1);
@@ -201,7 +204,7 @@ export function applyEvent(win, event, now = Date.now()) {
   const xp = Math.max(0, Math.floor(xpForKind(kind, event)));
   if (!xp && kind !== 'hit' && !SERVER_XP_KINDS.has(kind)) return { ok: false, reason: 'no_xp', xp: 0, window: win };
   // The boss pays out in one lump (validated separately), so it is not held to the per-minute XP cap.
-  if (kind !== 'bossKill' && win.xp + xp > CAPS_PER_MINUTE.xp) {
+  if (kind !== 'bossKill' && win.xp + xp > (event.boost === true ? P9.BOOST_XP_CAP : CAPS_PER_MINUTE.xp)) {
     return { ok: false, reason: 'rate_xp', xp: 0, window: win };
   }
   win.events.push({ t: now, kind, xp });
@@ -215,6 +218,8 @@ export function applyEvent(win, event, now = Date.now()) {
  */
 export function scoreValidatedEvent(event, ctx = {}) {
   const now = ctx.now != null ? ctx.now : Date.now();
+  // The boost flag only ever comes from the room (ctx), never from the client's event.
+  if (event && typeof event === 'object') event = { ...event, boost: ctx.boost === true };
   const kind = event && event.kind;
   if (REWARD_KINDS.has(kind)) {
     const r = validateReward({ recentDigs: ctx.recentDigs, sessionId: ctx.sessionId, kind, x: event.x, y: event.y, now });
