@@ -10,9 +10,12 @@ let playerId = null;
 let players = new Map(); // id -> player data
 let dugBlocks = new Map(); // "x,y" -> timestamp
 let playerCount = 0;
+let recruitCount = 0; // NPC recruits (server bots), never included in playerCount
 let worldSeed = null;
 let connecting = false;
 let lastStateSent = 0;
+let lastStateKey = '';
+let sector = null;
 let pendingXp = 0;
 let chatCallbacks = [];
 let statusCallbacks = [];
@@ -139,7 +142,9 @@ function handleMessage(data) {
   switch (data.type) {
     case 'init':
       playerId = data.playerId;
+      sector = data.sector || null;
       playerCount = data.playerCount;
+      recruitCount = data.recruitCount || 0;
       players.clear();
       if (typeof data.seed === 'number' && data.seed !== worldSeed) {
         worldSeed = data.seed;
@@ -163,20 +168,25 @@ function handleMessage(data) {
           name: data.name,
           pfp: data.pfp,
           level: data.level,
+          bot: !!data.bot,
+          role: data.role || null,
           x: 0, y: 0, vx: 0, vy: 0, face: 1, swing: 0
         });
-        playerCount = typeof data.playerCount === 'number' ? data.playerCount : playerCount + 1;
+        if (data.bot) recruitCount = typeof data.recruitCount === 'number' ? data.recruitCount : recruitCount + 1;
+        else playerCount = typeof data.playerCount === 'number' ? data.playerCount : playerCount + 1;
         if (data.xHandle) players.get(data.playerId).xHandle = data.xHandle;
       }
       break;
       
     case 'leave':
       players.delete(data.playerId);
-      playerCount = typeof data.playerCount === 'number' ? data.playerCount : Math.max(0, playerCount - 1);
+      if (data.bot) recruitCount = typeof data.recruitCount === 'number' ? data.recruitCount : Math.max(0, recruitCount - 1);
+      else playerCount = typeof data.playerCount === 'number' ? data.playerCount : Math.max(0, playerCount - 1);
       break;
       
     case 'states':
       playerCount = data.playerCount;
+      recruitCount = data.recruitCount || 0;
       if (data.roster) { roster = data.roster; rosterCallbacks.forEach(cb => cb(roster)); }
       data.players.forEach(p => {
         if (p.id !== playerId) {
@@ -194,6 +204,7 @@ function handleMessage(data) {
             existing.level = p.level;
             existing.xHandle = p.xHandle;
             existing.status = p.status;
+            existing.bot = !!p.bot;
           } else {
             players.set(p.id, { ...p, targetX: p.x, targetY: p.y });
           }
@@ -219,7 +230,7 @@ function handleMessage(data) {
           player.chatText = data.text;
           player.chatTime = Date.now();
         }
-        chatCallbacks.forEach(cb => cb(data.playerId, data.name, data.text));
+        chatCallbacks.forEach(cb => cb(data.playerId, data.name, data.text, !!data.bot));
       }
       break;
   }
@@ -230,9 +241,7 @@ function sendState(x, y, vx, vy, face, swing) {
   
   const now = Date.now();
   if (now - lastStateSent < BT_CONFIG.syncRate) return;
-  lastStateSent = now;
-  
-  ws.send(JSON.stringify({
+  const msg = {
     type: 'state',
     x: Math.round(x),
     y: Math.round(y),
@@ -241,7 +250,14 @@ function sendState(x, y, vx, vy, face, swing) {
     face,
     swing: swing > 0 ? 1 : 0,
     level: (RPG.getProfile() || {}).level || 1
-  }));
+  };
+  // Standing still: skip identical frames, heartbeat every 2 s. Every incoming WebSocket
+  // message is a billed Durable Object request, so this is most of the server cost.
+  const key = msg.x + ',' + msg.y + ',' + msg.face + ',' + msg.swing + ',' + msg.level;
+  if (key === lastStateKey && now - lastStateSent < 2000) return;
+  lastStateKey = key;
+  lastStateSent = now;
+  ws.send(JSON.stringify(msg));
 }
 
 function sendDig(x, y) {
@@ -315,6 +331,8 @@ window.Multiplayer = {
   get playerId() { return playerId; },
   get players() { return players; },
   get playerCount() { return playerCount; },
+  get recruitCount() { return recruitCount; },
+  get sector() { return sector; },
   get roster() { return roster; },
   get worldSeed() { return worldSeed; },
   get dugBlocks() { return dugBlocks; }

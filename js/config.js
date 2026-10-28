@@ -48,7 +48,7 @@ window.BT_CONFIG = {
   wsReconnectAttempts: 10,
   
   // State sync rate (ms between position updates)
-  syncRate: 50, // 20Hz
+  syncRate: 100, // 10Hz (server broadcasts at 10Hz); idle frames are skipped
   
   // XP settings
   xpPerDig: 1,

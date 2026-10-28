@@ -1,7 +1,7 @@
 // Wiring: loader, navigation, panels, HUD, touch controls, mini-app + haptics + RPG + multiplayer.
 (function(){
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
-const TITLES={hot:"HOT LIST",calls:"CALLS",callers:"CALLERS",about:"ABOUT",inventory:"GEAR",leaderboard:"RANKS",campaign:"CAMPAIGN",events:"EVENTS",squad:"SQUAD"};
+const TITLES={hot:"HOT LIST",calls:"CALLS",callers:"CALLERS",about:"ABOUT",inventory:"GEAR",leaderboard:"RANKS",campaign:"CAMPAIGN",events:"EVENTS",squad:"SQUAD",world:"WORLD MAP"};
 let current=null,wasPlaying=false,lastStats=null;
 const touch=matchMedia("(pointer:coarse)").matches||"ontouchstart" in window;
 
@@ -23,8 +23,15 @@ function onHud(h){
   $("#goalfill").style.width=(h.goal*100).toFixed(1)+"%";
   // Update online count
   if(typeof Multiplayer!=='undefined'){
-    $("#onlineCount").textContent=Multiplayer.playerCount;
+    paintOnline();
   }
+}
+// "3 ONLINE" for humans; recruits (server bots) shown separately and never added in.
+function paintOnline(n){
+  const humans=n!=null?n:Multiplayer.playerCount;
+  $("#onlineCount").textContent=humans;
+  const r=Multiplayer.connected?Multiplayer.recruitCount:0,el=$("#recruitCount");
+  if(el){el.textContent=r?`+ ${r} BOT${r>1?'S':''}`:"";el.classList.toggle("hidden",!r)}
 }
 function onHit(){
   [...livesEl.children].forEach(el=>{el.classList.remove("hit");void el.offsetWidth;el.classList.add("hit")});
@@ -61,7 +68,8 @@ $("#startBtn").onclick=start;
 addEventListener("hashchange",()=>{const h=location.hash.slice(1);if(TITLES[h])openPanel(h);else if(!h&&current)closePanel()});
 $("#retryBtn").onclick=start;
 addEventListener("keydown",e=>{
-  if(current){if(e.code==="Escape")closePanel();return}
+  if(current){if(e.code==="Escape"||(e.code==="KeyG"&&current==="world"))closePanel();return}
+  if(e.code==="KeyG"&&!(e.target&&/^(INPUT|TEXTAREA)$/.test(e.target.tagName))){e.preventDefault();openPanel("world");return}
   if((e.code==="Space"||e.code==="Enter")&&(Game.mode==="title"&&!$("#title").classList.contains("hidden")||Game.mode==="over")){e.preventDefault();start()}
   if(e.code==="KeyM")toggleMute();
 });
@@ -126,15 +134,15 @@ const CHAT_RATE_LIMIT=2000; // respect server 2s limit
 const chatLogLines=[];
 const MAX_CHAT_LOG=5;
 
-function addChatLog(name,text,own=false){
-  chatLogLines.push({name,text,own,time:Date.now()});
+function addChatLog(name,text,own=false,bot=false){
+  chatLogLines.push({name,text,own,bot,time:Date.now()});
   if(chatLogLines.length>MAX_CHAT_LOG)chatLogLines.shift();
   renderChatLog();
 }
 
 function renderChatLog(){
   const log=$("#chatLog");
-  log.innerHTML=chatLogLines.map(l=>`<div class="chat-log-line ${l.own?'own':''}"><span class="chat-name">${escHtml(l.name)}:</span> <span class="chat-msg">${escHtml(l.text)}</span></div>`).join('');
+  log.innerHTML=chatLogLines.map(l=>`<div class="chat-log-line ${l.own?'own':''} ${l.bot?'bot':''}">${l.bot?'<span class="bot-tag">BOT</span>':''}<span class="chat-name">${escHtml(l.name)}:</span> <span class="chat-msg">${escHtml(l.text)}</span></div>`).join('');
 }
 
 function applyCooldown(){
@@ -167,8 +175,8 @@ $$(".chat-emotes button").forEach(btn=>{
 });
 
 // Listen for incoming chat from others
-Multiplayer.onChat((playerId,name,text)=>{
-  addChatLog(name||'TRENCHER',text,false);
+Multiplayer.onChat((playerId,name,text,bot)=>{
+  addChatLog(name||'TRENCHER',text,false,bot);
 });
 
 // panels
@@ -191,10 +199,14 @@ function openPanel(id){
   }else if(id==='squad'){
     $("#panelBody").innerHTML='<p class="note">Loading squad…</p>';
     renderSquad();
+  }else if(id==='world'){
+    $("#panelBody").innerHTML=typeof WorldMap!=='undefined'?WorldMap.render():'<p class="note">Map loading…</p>';
+    if(typeof WorldMap!=='undefined')WorldMap.mount();
   }else{
     $("#panelBody").innerHTML=BT.render(id);
   }
   
+  if(id!=='world'&&typeof WorldMap!=='undefined')WorldMap.unmount();
   $("#panelBody").scrollTop=0;
   // Pink EXAMPLE DATA badge only on data panels (hot/calls/callers) that really fell back to data/calls.json.
   const dataPanel=id==="hot"||id==="calls"||id==="callers";
@@ -207,6 +219,7 @@ function openPanel(id){
   Haptics.selection();
 }
 function closePanel(){
+  if(typeof WorldMap!=='undefined')WorldMap.unmount();
   current=null;$("#panelWrap").classList.add("hidden");Game.pause(false);
   $$("#menu a").forEach(b=>b.classList.remove("on"));
   history.replaceState(null,"",location.pathname+location.search);
@@ -392,13 +405,15 @@ function renderRoster(list){
   const el=$("#rosterPanel");
   if(!el)return;
   const rows=list||[];
-  el.innerHTML=rows.length?rows.map(p=>`<div class="roster-row ${p.status||''}">
+  const r=Multiplayer.connected?Multiplayer.recruitCount:0;
+  const head=`<div class="roster-head">${rows.length} TRENCHER${rows.length===1?'':'S'}${r?` <span class="bot-tag">+ ${r} RECRUIT BOT${r>1?'S':''}</span>`:''}</div>`;
+  el.innerHTML=head+(rows.length?rows.map(p=>`<div class="roster-row ${p.status||''}">
     <span class="dot ${p.status==='idle'?'idle':'on'}"></span>
     <b>${escHtml(p.name||'Trencher')}</b>
     <span>LV ${p.level||1}</span>
     <span>${escHtml(p.xHandle||'')}</span>
     <span class="st">${p.status==='idle'?'IDLE':'ACTIVE'}</span>
-  </div>`).join(''):'<div class="roster-row">Nobody else in the trench.</div>';
+  </div>`).join(''):'<div class="roster-row">Nobody else in the trench.</div>');
 }
 
 async function refreshPresence(){
@@ -487,7 +502,7 @@ Promise.all([
 });
 
 // Periodic RPG HUD update (+ online count, which onHud only refreshes when lives/mult/depth change)
-setInterval(()=>{updateRpgHud();if(Multiplayer.connected)$("#onlineCount").textContent=Multiplayer.playerCount},1000);
+setInterval(()=>{updateRpgHud();if(Multiplayer.connected)paintOnline()},1000);
 
 // Privy account chip (hidden when BT_PRIVY_APP_ID is empty). Guest → "GUEST · SIGN IN"; signed in → avatar, name, method, wallet.
 function toast(text,ms){

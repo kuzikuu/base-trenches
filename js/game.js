@@ -514,6 +514,8 @@ function drawPlayer(cx,cy,step){
 }
 
 // Draw other players (multiplayer ghosts)
+// NPC recruits: khaki/grey palette so they never pass for real players.
+const BOT_CM={"#":"rgba(120,128,96,0.75)","w":"rgba(255,255,255,0.7)","d":"rgba(70,76,56,0.75)","c":"rgba(180,190,160,0.7)","m":"rgba(150,150,150,0.6)","y":"rgba(210,200,140,0.7)","b":"rgba(138,90,43,0.6)","t":"rgba(201,162,122,0.6)","p":"rgba(220,220,210,0.7)"};
 const GHOST_CM={"#":"rgba(0,82,255,0.5)","w":"rgba(255,255,255,0.6)","d":"rgba(11,26,143,0.5)","c":"rgba(22,224,255,0.5)","m":"rgba(255,43,214,0.5)","y":"rgba(255,212,0,0.5)","b":"rgba(138,90,43,0.5)","t":"rgba(201,162,122,0.5)","p":"rgba(201,214,255,0.5)"};
 let ownChatText=null,ownChatTime=0;
 function setOwnChat(text){ownChatText=text;ownChatTime=Date.now()}
@@ -527,10 +529,18 @@ function drawOtherPlayers(cx,cy,step){
     const moving=Math.abs(p.vx||0)>8;
     const legs=moving?LEGS[1+((step/3|0)%2)]:LEGS[0];
     // Draw ghost with transparency
-    sprite(ctx,SOLDIER_TOP,X,Y,f,GHOST_CM);
-    sprite(ctx,legs,X,Y+9,f,GHOST_CM);
-    // Name tag
-    if(p.name){
+    const cm=p.bot?BOT_CM:GHOST_CM;
+    sprite(ctx,SOLDIER_TOP,X,Y,f,cm);
+    sprite(ctx,legs,X,Y+9,f,cm);
+    if(p.bot&&p.swing&&(step/4|0)%2){ctx.fillStyle="rgba(70,76,56,0.8)";ctx.fillRect(X+(f?-3:10),Y+4,3,2)}
+    // Name tag (recruits: grey tag with a BOT prefix)
+    if(p.bot&&p.name){
+      const name="BOT "+(p.name.length>10?p.name.slice(0,9)+'…':p.name).toUpperCase();
+      const tw=PixFont.width(name)+4;
+      ctx.fillStyle="rgba(70,76,56,0.85)";
+      ctx.fillRect(X+5-tw/2|0,Y-10,tw,7);
+      PixFont.draw(ctx,name,X+7-tw/2|0,Y-9,"#fff");
+    }else if(p.name){
       const name=(p.name.length>10?p.name.slice(0,9)+'…':p.name).toUpperCase();
       const tw=PixFont.width(name)+4;
       ctx.fillStyle="rgba(255,255,255,0.8)";
@@ -554,7 +564,7 @@ function drawChatBubbles(cx,cy){
     Multiplayer.players.forEach(p=>{
       if(p.chatText&&p.chatTime&&now-p.chatTime<4000){
         const age=(now-p.chatTime)/4000;
-        bubbles.push({x:p.x,y:p.y,text:p.chatText,name:p.name,age,own:false});
+        bubbles.push({x:p.x,y:p.y,text:p.chatText,name:p.name,age,own:false,bot:!!p.bot});
       }
     });
   }
@@ -601,9 +611,9 @@ function drawChatBubbles(cx,cy){
     PixFont.draw(ctx,txt,(bx+6)|0,(by+4)|0,BLUE);
     // Name badge (small, top-left of bubble)
     if(b.name){
-      const nm=(b.own?'YOU':b.name.slice(0,8)).toUpperCase();
+      const nm=(b.own?'YOU':(b.bot?'BOT ':'')+b.name.slice(0,8)).toUpperCase();
       const nw=PixFont.width(nm)+4;
-      ctx.fillStyle=b.own?'#ff2bd6':BLUE;
+      ctx.fillStyle=b.own?'#ff2bd6':b.bot?'#4a5038':BLUE;
       ctx.fillRect((bx-1)|0,(by-6)|0,nw,7);
       PixFont.draw(ctx,nm,(bx+1)|0,(by-5)|0,'#fff');
     }
