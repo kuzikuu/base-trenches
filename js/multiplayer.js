@@ -27,16 +27,21 @@ let rosterCallbacks = [];
 let roomOverride = null;
 let savedCallbacks = [];
 
+// Guest credentials go in the first websocket message (type 'auth'), never in the URL, so the
+// guest secret does not end up in proxy / CDN / server access logs. Signed-in players still send
+// their short-lived Privy / Farcaster token in the URL (browsers can't set WS headers).
+let pendingAuth = null;
 async function getWsUrl(profile) {
   const base = BT_CONFIG.serverUrl.replace(/^http/, 'ws');
   const q = new URLSearchParams({ room: roomOverride && /^main(-[2-8])?$/.test(roomOverride) ? roomOverride : 'main' });
-  // Credentials let the server credit XP to this profile (browsers can't set WS headers)
+  pendingAuth = null;
+  // Credentials let the server credit XP to this profile
   const token = profile && typeof RPG !== 'undefined' ? await RPG.getAuthToken() : null;
   if (token) {
     q.set('token', token);
   } else if (profile && profile.id && String(profile.id).startsWith('guest:')) {
-    q.set('profileId', profile.id);
-    q.set('secret', RPG.getGuestSecret());
+    const secret = RPG.getGuestSecret();
+    if (secret) pendingAuth = { type: 'auth', profileId: profile.id, secret };
   }
   return `${base}/api/ws?${q}`;
 }
@@ -45,10 +50,11 @@ async function connect(profile) {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   
   if (connecting) return;
-  let sock;
+  let sock, auth = null;
   try {
     connecting = true;
     const url = await getWsUrl(profile);
+    auth = pendingAuth; pendingAuth = null;
     sock = ws = new WebSocket(url);
   } catch (e) {
     connecting = false;
@@ -73,7 +79,8 @@ async function connect(profile) {
     heartbeatSock = sock;
     heartbeat = setInterval(() => { if (sock.readyState === WebSocket.OPEN) { try { sock.send('ping'); } catch (e) {} } }, 25000);
     
-    // Send join message
+    // Guest auth first (the room verifies it before handling join), then join
+    if (auth) sock.send(JSON.stringify(auth));
     sock.send(JSON.stringify({
       type: 'join',
       playerId: profile.id,

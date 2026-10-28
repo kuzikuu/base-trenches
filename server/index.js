@@ -45,6 +45,7 @@ import { dedupePresence, socketsToReplace, STALE_MS, CLOSE_STALE, CLOSE_REPLACED
 import { levelForDepth, LEVEL_DEPTH_M, MAX_LEVEL, killXp, bossXp, bossBand, inBossZone, elevatorStops, validElevatorStop } from './lib/levels.js';
 import { P9, P9_POINTS, COLLECTIBLE_KINDS, sanitizeTicker, noteStreak, perkCrossed, perkFor, manifestCrossed, publicName, isGuestId, boostActive } from './lib/power9.js';
 export { Pulse } from './lib/pulse.js';
+import { parseWsAuth } from './lib/wsauth.js';
 import { normalizeSkills, learn as learnSkill, validateSkills, skillPoints, spentPoints, RESPEC_COOLDOWN_MS } from './lib/skills.js';
 import { sanitizeSave, sanitizeEquipped, normalizeMeta, noteCredit, emptyMeta, deathCheckpoint, elevatorStart, SAVE_MIN_GAP_MS } from './lib/save.js';
 
@@ -218,6 +219,7 @@ export class TrenchRoom {
     this.raidSurvives = new Map(); // sessionId -> barrages survived since the last boss raid
     this.bossSpawns = new Map();   // sessionId -> { band, t } last Sandmaw spawn the room saw
     this.bossSlain = new Map();    // sessionId -> Set(bands) already paid this session
+    this.authPending = new Map();  // sessionId -> in-flight guest 'auth' check (later messages wait for it)
     this.seenAt = new Map();       // sessionId -> last message time (memory only; heartbeats use the auto-response timestamp)
     this.gone = new Set();         // sessionIds the room closed (stale / replaced) but the runtime still lists
     // Power of 9: validated pickups / boss kills / milestones are noted here and batched to the
@@ -495,7 +497,11 @@ export class TrenchRoom {
   async webSocketMessage(ws, message) {
     try {
       const data = JSON.parse(message);
-      const attachment = ws.deserializeAttachment() || {};
+      let attachment = ws.deserializeAttachment() || {};
+      if (data.type === 'auth') { await this.handleAuth(ws, data, attachment); return; }
+      // A guest 'auth' still being checked: handle join / state after it, with the updated attachment.
+      const pend = attachment.sessionId && this.authPending.get(attachment.sessionId);
+      if (pend) { await pend; attachment = ws.deserializeAttachment() || {}; }
       if (attachment.sessionId) {
         if (this.gone.has(attachment.sessionId)) { try { ws.close(CLOSE_STALE, 'stale'); } catch (e) {} return; }
         this.seenAt.set(attachment.sessionId, Date.now());
@@ -516,6 +522,28 @@ export class TrenchRoom {
     } catch (e) {
       console.error('WebSocket message error:', e);
     }
+  }
+
+  // Guest credentials sent as the first message (new clients) instead of ?secret= in the URL.
+  handleAuth(ws, data, attachment) {
+    const msg = parseWsAuth(data, attachment);
+    if (!msg || !attachment.sessionId || this.authPending.has(attachment.sessionId)) return;
+    const sid = attachment.sessionId;
+    const p = (async () => {
+      let ok = false;
+      try {
+        const res = await profilesStub(this.env).fetch(new Request('http://internal/check-guest', {
+          method: 'POST',
+          body: JSON.stringify({ id: msg.profileId, secretHash: await sha256Hex(msg.secret) })
+        }));
+        ok = !!(await res.json()).ok;
+      } catch (e) { ok = false; }
+      const a = ws.deserializeAttachment() || {};
+      if (ok && !a.verifiedProfileId) { a.verifiedProfileId = msg.profileId; ws.serializeAttachment(a); }
+      try { ws.send(JSON.stringify({ type: 'auth', ok })); } catch (e) {}
+    })().finally(() => this.authPending.delete(sid));
+    this.authPending.set(sid, p);
+    return p;
   }
 
   async webSocketClose(ws, code, reason) {
@@ -1834,7 +1862,7 @@ async function handleRequest(request, env, ctx) {
     let verifiedProfileId = null;
     const token = url.searchParams.get('token');
     const guestId = url.searchParams.get('profileId');
-    const guestSecret = url.searchParams.get('secret');
+    const guestSecret = url.searchParams.get('secret'); // legacy (cached pre-pr13 clients); new clients send { type: 'auth' }
     if (token) {
       const v = await verifyIncomingToken(token, env);
       if (v) verifiedProfileId = v.id;
