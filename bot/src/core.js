@@ -9,7 +9,7 @@
 export const THRESH = { tags: 9, replies: 5, reposts: 8, likes: 9 };
 export const HIT_X = 2;
 export const LINKS = {
-  site: "https://base-trenches.pages.dev",
+  site: "https://powerof9base.com",
   x: "https://x.com/powerof9base",
   channel: "https://t.me/powerof9base",
   group: "https://t.me/+vjKJdDAMAJQxZGYx",
@@ -503,7 +503,7 @@ export class Bot {
 
   async cmdEvents(m) {
     const { upcoming, live } = await this.fetchEvents();
-    if (!live.length && !upcoming.length) return this.reply(m, "No events on the board. Check the <a href=\"https://base-trenches.pages.dev/#events\">EVENTS</a> page.");
+    if (!live.length && !upcoming.length) return this.reply(m, "No events on the board. Check the <a href=\"https://powerof9base.com/#events\">EVENTS</a> page.");
     const parts = [];
     if (live.length) parts.push("<b>LIVE</b>\n" + live.map((e) => this.eventLine(e)).join("\n\n"));
     if (upcoming.length) parts.push("<b>UPCOMING</b>\n" + upcoming.slice(0, 8).map((e) => this.eventLine(e)).join("\n\n"));

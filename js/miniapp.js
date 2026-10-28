@@ -3,7 +3,7 @@
 (function(){
 "use strict";
 
-const HOME_URL = window.BT_HOME_URL || 'https://base-trenches.pages.dev/';
+const HOME_URL = window.BT_HOME_URL || 'https://powerof9base.com/';
 let sdk = null;
 let context = null;
 let isInHost = false;

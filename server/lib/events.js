@@ -107,7 +107,7 @@ export function eventToVevent(ev, { prodId = '-//Base Trenches//Events//EN', now
     foldIcs(`SUMMARY:${icsEscape(ev.title)}`),
     foldIcs(`DESCRIPTION:${icsEscape(ev.description || '')}`),
     foldIcs(`CATEGORIES:${icsEscape(ev.type || '')}`),
-    foldIcs(`URL:https://base-trenches.pages.dev/#events`),
+    foldIcs(`URL:https://powerof9base.com/#events`),
     'END:VEVENT'
   ];
   return lines.join('\r\n');

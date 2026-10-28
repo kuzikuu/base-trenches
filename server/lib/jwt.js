@@ -2,7 +2,7 @@
 // Works in Cloudflare Workers and Node (crypto.subtle). JWKS fetch is injectable for tests.
 
 export const FARCASTER_QUICK_AUTH_ISSUER = 'https://auth.farcaster.xyz';
-export const QUICK_AUTH_AUDIENCES = ['base-trenches.pages.dev', 'kuzikuu.github.io'];
+export const QUICK_AUTH_AUDIENCES = ['powerof9base.com', 'www.powerof9base.com', 'base-trenches.pages.dev', 'kuzikuu.github.io'];
 export const PRIVY_ISSUER = 'privy.io';
 
 export function b64urlToBytes(str) {

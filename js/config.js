@@ -40,7 +40,7 @@ window.BT_CONFIG = {
   },
   
   // Home URL for sharing
-  homeUrl: window.BT_HOME_URL || 'https://base-trenches.pages.dev/',
+  homeUrl: window.BT_HOME_URL || 'https://powerof9base.com/',
   
   // WebSocket reconnect settings
   wsReconnectDelay: 2000,

@@ -41,6 +41,8 @@ import {
 import { parseGeo, geoHeader, aggregateGeo } from './lib/geo.js';
 
 const CORS_ORIGINS = [
+  'https://powerof9base.com',
+  'https://www.powerof9base.com',
   'https://base-trenches.pages.dev',
   'https://kuzikuu.github.io',
   'http://localhost:8080',

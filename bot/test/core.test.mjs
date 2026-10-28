@@ -48,7 +48,7 @@ test("parsing", () => {
   assert.equal(normalizeXStatus("https://twitter.com/PowerOf9Base/status/1234567890"), "https://x.com/PowerOf9Base/status/1234567890");
   assert.equal(esc(`<b>&"`), "&lt;b&gt;&amp;&quot;");
   const bp = bullPost("TRENCH", CA);
-  assert.ok(bp.includes("$TRENCH") && bp.includes(CA) && bp.includes("POWER OF 9") && bp.includes("https://base-trenches.pages.dev"));
+  assert.ok(bp.includes("$TRENCH") && bp.includes(CA) && bp.includes("POWER OF 9") && bp.includes("https://powerof9base.com"));
   assert.ok(intentUrl(bp).startsWith("https://x.com/intent/post?text=%24TRENCH"));
 });
 

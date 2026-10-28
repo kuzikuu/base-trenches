@@ -4,7 +4,7 @@ import { DurableObject } from "cloudflare:workers";
 import { Bot, kvGet, kvSet } from "./core.js";
 import { AdbSink } from "./adb.js";
 
-const ALLOWED_ORIGINS = ["https://base-trenches.pages.dev", "https://kuzikuu.github.io"];
+const ALLOWED_ORIGINS = ["https://powerof9base.com", "https://www.powerof9base.com", "https://base-trenches.pages.dev", "https://kuzikuu.github.io"];
 const cors = (req) => {
   const o = req.headers.get("Origin");
   return {

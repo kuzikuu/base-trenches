@@ -26,7 +26,7 @@ Live at https://base-trenches-bot.base-trenches.workers.dev
 - `/events` lists live and upcoming events. Commands from an anonymous admin or “send as” the group
   (`sender_chat` set, not an automatic forward) get one rate-limited reply to switch **Send as** to
   a personal account; tags are not applied.
-- Public API (CORS for base-trenches.pages.dev, kuzikuu.github.io):
+- Public API (CORS for powerof9base.com, www.powerof9base.com, base-trenches.pages.dev, kuzikuu.github.io):
   `/api/health`, `/api/hot`, `/api/calls`, `/api/callers`, `/api/coin/:ca`.
 
 ## Secrets

@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://powerof9base.com/sitemap.xml

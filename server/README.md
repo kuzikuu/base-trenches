@@ -136,6 +136,7 @@ npx wrangler dev
 ## CORS
 
 Allowed origins:
+- `https://powerof9base.com`, `https://www.powerof9base.com`
 - `https://base-trenches.pages.dev`
 - `https://kuzikuu.github.io`
 - `http://localhost:8080` (dev)
@@ -144,7 +145,7 @@ Allowed origins:
 ## Auth model
 
 - **Guests**: id `guest:<uuid>`. The first save stores a SHA-256 of the client's `X-Guest-Secret` header (random, kept in localStorage); later saves must send the same secret.
-- **Farcaster/Base**: id `fid:<fid>`. Saves require `Authorization: Bearer <Quick Auth JWT>` (RS256, iss `https://auth.farcaster.xyz`, aud = `base-trenches.pages.dev` or `kuzikuu.github.io`, sub = fid).
+- **Farcaster/Base**: id `fid:<fid>`. Saves require `Authorization: Bearer <Quick Auth JWT>` (RS256, iss `https://auth.farcaster.xyz`, aud = `powerof9base.com`, `www.powerof9base.com`, `base-trenches.pages.dev` or `kuzikuu.github.io`, sub = fid).
 - **WebSocket**: browsers can't set headers, so the client passes `?token=` (Quick Auth) or `?profileId=&secret=` (guest). The Worker verifies them and the room only credits XP to that profile.
 - XP / score / leaderboard are server-authoritative. Digs are checked against the shared dug map and rate-capped; dodges, hits, mission completions have per-minute plausibility caps.
 - `PROFILES_SHARD` in index.js names the Profiles DO instance; change it to start a fresh leaderboard season.
