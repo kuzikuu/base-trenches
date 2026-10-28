@@ -220,6 +220,55 @@ a{color:var(--blue)}
 .bigbtn.ghost{background:#fff;color:var(--blue);border:2px solid var(--blue);box-shadow:4px 4px 0 var(--blue)}
 .bigbtn.ghost:hover{background:var(--blue);color:#fff}
 
+/* RPG HUD elements */
+.hudleft{position:absolute;left:12px;bottom:40px;display:flex;flex-direction:column;gap:4px;pointer-events:none}
+.level{font-family:"PS2P";font-size:11px;background:#fff;border:2px solid var(--blue);padding:4px 6px}
+.xpbar{width:80px;height:8px;border:2px solid var(--blue);background:#fff}
+.xpbar span{display:block;height:100%;width:0;background:var(--blue);transition:width .3s}
+.offline-badge{position:absolute;top:10px;left:50%;transform:translateX(-50%);background:var(--m);color:#fff;font-family:"PS2P";font-size:9px;padding:5px 10px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+
+/* Gear/Inventory panel */
+.gear-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
+.gear-item{border:2px solid var(--blue);padding:10px;position:relative;background:#fff;cursor:pointer}
+.gear-item:hover{background:#eef3ff}
+.gear-item.equipped{box-shadow:inset 0 0 0 3px var(--g)}
+.gear-item .type{font-family:"PS2P";font-size:8px;text-transform:uppercase;opacity:.7}
+.gear-item .name{font-family:"PS2P";font-size:11px;margin:4px 0}
+.gear-item .rarity{position:absolute;top:8px;right:8px;width:8px;height:8px;border-radius:50%}
+.gear-item .stat{font-size:16px;opacity:.85}
+.gear-item .desc{font-size:14px;opacity:.7;margin-top:4px}
+.rarity-common{background:#aaa}.rarity-uncommon{background:#22e36b}.rarity-rare{background:#0052ff}.rarity-epic{background:#ff2bd6}.rarity-legendary{background:#ffd400}
+.equip-slots{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.slot{border:2px solid var(--blue);padding:8px 12px;min-width:100px;text-align:center}
+.slot .label{font-family:"PS2P";font-size:8px;opacity:.7}
+.slot .equipped-name{font-family:"PS2P";font-size:10px;margin-top:4px}
+.slot .empty{font-size:14px;opacity:.5}
+
+/* Profile card */
+.profile-card{border:2px solid var(--blue);padding:16px;margin-bottom:16px;display:flex;gap:16px;align-items:center}
+.profile-pfp{width:48px;height:48px;border:2px solid var(--blue);background:var(--dither) repeat;background-size:4px 4px}
+.profile-pfp img{width:100%;height:100%;object-fit:cover}
+.profile-info{flex:1}
+.profile-name{font-family:"PS2P";font-size:14px}
+.profile-level{font-family:"PS2P";font-size:10px;margin-top:4px}
+.profile-stats{display:flex;gap:16px;margin-top:8px;font-size:16px}
+.profile-stats b{font-family:"PS2P";font-size:10px;display:block;font-weight:normal;opacity:.7}
+
+/* Leaderboard */
+.lb-tabs{display:flex;gap:0;margin-bottom:12px}
+.lb-tabs button{flex:1;background:#fff;border:2px solid var(--blue);font-family:"PS2P";font-size:9px;padding:8px;color:var(--blue)}
+.lb-tabs button.on{background:var(--blue);color:#fff}
+.lb-list{display:flex;flex-direction:column;gap:8px}
+.lb-row{display:flex;align-items:center;gap:10px;padding:8px;border:2px solid var(--blue)}
+.lb-row.top3{background:#eef3ff}
+.lb-rank{font-family:"PS2P";font-size:14px;width:30px;text-align:center}
+.lb-rank.gold{color:#ffd400}.lb-rank.silver{color:#aaa}.lb-rank.bronze{color:#cd7f32}
+.lb-pfp{width:28px;height:28px;border:2px solid var(--blue);background:#eef3ff}
+.lb-pfp img{width:100%;height:100%;object-fit:cover}
+.lb-name{flex:1;font-family:"PS2P";font-size:10px}
+.lb-value{font-family:"PS2P";font-size:11px;color:var(--blue)}
+
 /* Safe-area insets for mini-app host */
 body{padding-top:var(--safe-top);padding-bottom:var(--safe-bottom);padding-left:var(--safe-left);padding-right:var(--safe-right)}
 #topbar{top:var(--safe-top)}
@@ -235,4 +284,35 @@ body{padding-top:var(--safe-top);padding-bottom:var(--safe-bottom);padding-left:
   .tag{font-size:9px}
   .bigbtn{font-size:11px;padding:12px 18px}
   .over-actions{gap:8px}
+}
+
+/* MP fixes: keep SND/VIB/MENU on one line at 390px, and lift the level/XP HUD above the touch d-pad */
+@media (max-width:560px){
+  #topbar{gap:8px;padding:0 10px}
+  #topbar .iconbtn{padding-left:6px;padding-right:6px;font-size:9px}
+}
+/* level/XP/online HUD sits under the lives bar (bottom-left collided with the ticker on desktop and the d-pad on touch) */
+.hudleft{bottom:auto;top:62px;left:12px}
+
+/* Online count as a solid pill (readable on desktop) */
+.online-pill{font-family:"PS2P";font-size:9px;background:#fff;border:2px solid var(--blue);padding:3px 6px;color:var(--blue)}
+.online-pill span{color:var(--g)}
+
+/* Chat input box */
+.chat-box{position:absolute;bottom:40px;right:12px;display:flex;gap:4px;align-items:center;pointer-events:auto}
+.chat-emotes{display:flex;gap:2px}
+.chat-emotes button{font-size:14px;width:28px;height:28px;border:2px solid var(--blue);background:#fff;cursor:pointer;padding:0}
+.chat-emotes button:hover{background:var(--blue);color:#fff}
+.chat-emotes button:active{transform:scale(.95)}
+#chatInput{font-family:"PS2P";font-size:9px;width:100px;height:28px;border:2px solid var(--blue);padding:0 6px;outline:none}
+#chatInput:focus{box-shadow:0 0 0 2px rgba(0,82,255,.3)}
+#chatSend{font-family:"PS2P";font-size:11px;width:28px;height:28px;border:2px solid var(--blue);background:var(--blue);color:#fff;cursor:pointer;padding:0}
+#chatSend:hover{background:#003acc}
+#chatSend:active{transform:scale(.95)}
+@media (max-width:560px){
+  .chat-box{bottom:110px;right:8px;flex-direction:column;align-items:flex-end}
+  .chat-emotes{order:2}
+  #chatInput{width:90px;font-size:8px}
+  .chat-emotes button{width:24px;height:24px;font-size:12px}
+  #chatSend{width:24px;height:24px;font-size:9px}
 }

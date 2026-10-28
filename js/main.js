@@ -1,7 +1,7 @@
-// Wiring: loader, navigation, panels, HUD, touch controls, mini-app + haptics.
+// Wiring: loader, navigation, panels, HUD, touch controls, mini-app + haptics + RPG + multiplayer.
 (function(){
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
-const TITLES={hot:"HOT LIST",calls:"PREVIOUS CALLS",callers:"CALLERS",about:"HOW IT WORKS"};
+const TITLES={hot:"HOT LIST",calls:"CALLS",callers:"CALLERS",about:"ABOUT",inventory:"GEAR",leaderboard:"RANKS"};
 let current=null,wasPlaying=false,lastStats=null;
 const touch=matchMedia("(pointer:coarse)").matches||"ontouchstart" in window;
 
@@ -21,6 +21,10 @@ function onHud(h){
   if(m.textContent!==txt){m.textContent=txt;m.classList.remove("pop");void m.offsetWidth;m.classList.add("pop")}
   $("#depth").textContent="DEPTH "+h.depth+"M";
   $("#goalfill").style.width=(h.goal*100).toFixed(1)+"%";
+  // Update online count
+  if(typeof Multiplayer!=='undefined'){
+    $("#onlineCount").textContent=Multiplayer.playerCount;
+  }
 }
 function onHit(){
   [...livesEl.children].forEach(el=>{el.classList.remove("hit");void el.offsetWidth;el.classList.add("hit")});
@@ -33,20 +37,29 @@ function hint(t,ms){const h=$("#hint");if(!t){if(!hintTimer)h.classList.add("hid
 function onOver(s){
   clearTimeout(hintTimer);hintTimer=null;$("#hint").classList.add("hidden");
   $("#hud").classList.add("hidden");$("#touch").classList.add("hidden");
-  $("#overStats").innerHTML=`MULTIPLIER <b>x${s.mult.toFixed(2)}</b><br>DEPTH ${s.depth}M · GEMS ${s.gems} · POWER ${s.powerGems}<br>BEST x${(+s.best).toFixed(2)} · GOAL 589x`;
+  const profile=RPG.getProfile();
+  const lvl=profile?` · LEVEL ${profile.level}`:'';
+  $("#overStats").innerHTML=`MULTIPLIER <b>x${s.mult.toFixed(2)}</b><br>DEPTH ${s.depth}M · GEMS ${s.gems} · DIGS ${s.digs||0}${lvl}<br>BEST x${(+s.best).toFixed(2)} · GOAL 589x`;
   $("#over").classList.remove("hidden");
   lastStats=s;
 }
 Game.init($("#game"),{onHud,onHit,onOver,onHint:t=>hint(t),onOpen:id=>openPanel(id)});
 
-function start(){
+async function start(){
   $("#title").classList.add("hidden");$("#over").classList.add("hidden");$("#hud").classList.remove("hidden");
   if(touch)$("#touch").classList.remove("hidden");
+  // Wait briefly for multiplayer seed so first run is shared (up to 1.5s)
+  if(Multiplayer.connected&&Multiplayer.worldSeed==null){
+    const deadline=Date.now()+1500;
+    while(Date.now()<deadline&&Multiplayer.worldSeed==null)await new Promise(r=>setTimeout(r,50));
+  }
   Game.start();
+  updateRpgHud();
   if(!touch)hint("SPACE TO DIG · ARROWS TO MOVE · ↓+SPACE DIGS DOWN",4500);else hint("⛏ DIG · ▼+⛏ DIGS DOWN",4000);
 }
 $("#startBtn").onclick=start;
-addEventListener("hashchange",()=>{const h=location.hash.slice(1);if(TITLES[h])openPanel(h);else if(!h&&current)closePanel()});$("#retryBtn").onclick=start;
+addEventListener("hashchange",()=>{const h=location.hash.slice(1);if(TITLES[h])openPanel(h);else if(!h&&current)closePanel()});
+$("#retryBtn").onclick=start;
 addEventListener("keydown",e=>{
   if(current){if(e.code==="Escape")closePanel();return}
   if((e.code==="Space"||e.code==="Enter")&&(Game.mode==="title"&&!$("#title").classList.contains("hidden")||Game.mode==="over")){e.preventDefault();start()}
@@ -67,13 +80,75 @@ $("#menuBtn").onclick=()=>{$("#menu").classList.toggle("open");Haptics.selection
 // share button
 $("#shareBtn").onclick=()=>{if(lastStats)MiniApp.shareScore(lastStats.mult,lastStats.depth);Haptics.selection()};
 
+// RPG HUD update
+function updateRpgHud(){
+  const profile=RPG.getProfile();
+  if(!profile)return;
+  const {level,xpInLevel,xpForNext}=BT_CONFIG.levelFromXp(profile.xp);
+  $("#level").textContent=`LV ${level}`;
+  $("#xpfill").style.width=((xpInLevel/xpForNext)*100).toFixed(1)+"%";
+}
+
+// Level up handler
+RPG.onLevelUp((newLevel,oldLevel)=>{
+  Game._debug.showBanner(`LEVEL ${newLevel}!`);
+  updateRpgHud();
+});
+
+// Gear drop handler
+RPG.onGearDrop((gear)=>{
+  const rarity=RPG.GEAR_RARITIES[gear.rarity].toUpperCase();
+  Game._debug.showBanner(`${rarity} ${gear.name.toUpperCase()}!`);
+  hint(`Found ${gear.name}! Check GEAR menu.`,4000);
+});
+
+// Multiplayer status handler
+Multiplayer.onStatus((status)=>{
+  const badge=$("#offlineBadge");
+  if(status==='connected'){
+    badge.classList.add("hidden");
+  }else if(status==='offline'||status==='disconnected'){
+    badge.classList.remove("hidden");
+  }
+});
+
+// Chat input + emotes
+let lastChatSent=0;
+const CHAT_RATE_LIMIT=2000; // respect server 2s limit
+function sendChat(text){
+  if(!text||!text.trim())return;
+  const now=Date.now();
+  if(now-lastChatSent<CHAT_RATE_LIMIT){hint("Wait before sending again",1500);return}
+  if(!Multiplayer.connected){hint("Offline - can't send chat",1500);return}
+  Multiplayer.sendChat(text.trim());
+  lastChatSent=now;
+  Haptics.selection();
+  $("#chatInput").value="";
+}
+$("#chatSend").onclick=()=>sendChat($("#chatInput").value);
+$("#chatInput").onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();sendChat($("#chatInput").value)}};
+$$(".chat-emotes button").forEach(btn=>{
+  btn.onclick=()=>sendChat(btn.dataset.emote);
+});
+
 // panels
 function openPanel(id){
   if(!TITLES[id])return;
   if(!current){wasPlaying=Game.mode==="play";Game.pause(true)}
   current=id;$("#panelTitle").textContent=TITLES[id];
-  $("#panelBody").innerHTML=BT.render(id);$("#panelBody").scrollTop=0;
-  $(".example").style.display=id==="about"?"none":"";
+  
+  // Render appropriate content
+  if(id==='inventory'){
+    $("#panelBody").innerHTML=renderInventory();
+  }else if(id==='leaderboard'){
+    $("#panelBody").innerHTML='<p class="note">Loading...</p>';
+    renderLeaderboard();
+  }else{
+    $("#panelBody").innerHTML=BT.render(id);
+  }
+  
+  $("#panelBody").scrollTop=0;
+  $(".example").style.display=(id==="about"||id==="inventory"||id==="leaderboard")?"none":"";
   $$(".paneltabs button,#menu a").forEach(b=>b.classList.toggle("on",b.dataset.nav===id));
   $("#panelWrap").classList.remove("hidden");$("#menu").classList.remove("open");
   if(location.hash!=="#"+id)history.replaceState(null,"","#"+id);
@@ -87,6 +162,112 @@ function closePanel(){
 }
 $("#closePanel").onclick=closePanel;
 $("#panelWrap").addEventListener("click",e=>{if(e.target.id==="panelWrap")closePanel()});
+
+// Inventory rendering
+function renderInventory(){
+  const profile=RPG.getProfile();
+  if(!profile)return '<p class="note">No profile loaded</p>';
+  
+  const {level,xpInLevel,xpForNext}=BT_CONFIG.levelFromXp(profile.xp);
+  const pfpHtml=profile.pfp?`<img src="${escHtml(profile.pfp)}" alt="">`:'';
+  
+  let html=`
+    <div class="profile-card">
+      <div class="profile-pfp">${pfpHtml}</div>
+      <div class="profile-info">
+        <div class="profile-name">${escHtml(profile.name)}</div>
+        <div class="profile-level">Level ${level} · ${profile.xp} XP (${xpInLevel}/${xpForNext})</div>
+        <div class="profile-stats">
+          <div><b>BEST DEPTH</b>${profile.best_depth}M</div>
+          <div><b>DIAMONDS</b>${profile.total_diamonds}</div>
+          <div><b>DIGS</b>${profile.total_digs}</div>
+          <div><b>DEATHS</b>${profile.deaths}</div>
+        </div>
+      </div>
+    </div>
+    <h3 class="dotmatrix" style="font-size:12px;margin:12px 0">EQUIPPED</h3>
+    <div class="equip-slots">
+  `;
+  
+  for(const type of ['pickaxe','helmet','boots','charm']){
+    const gear=RPG.getEquippedGear(type);
+    const color=gear?RPG.RARITY_COLORS[gear.rarity]:'#aaa';
+    html+=`<div class="slot" data-slot="${type}">
+      <div class="label">${type.toUpperCase()}</div>
+      ${gear?`<div class="equipped-name" style="color:${color}">${gear.name}</div>`:'<div class="empty">NONE</div>'}
+    </div>`;
+  }
+  
+  html+=`</div><h3 class="dotmatrix" style="font-size:12px;margin:12px 0">INVENTORY (${profile.inventory.length})</h3>`;
+  
+  if(profile.inventory.length===0){
+    html+='<p class="note">No gear yet. Dig deeper to find loot!</p>';
+  }else{
+    html+='<div class="gear-grid">';
+    for(const gear of profile.inventory){
+      const equipped=profile.equipped[gear.type]===gear.id;
+      const rarity=RPG.GEAR_RARITIES[gear.rarity];
+      const statKey=Object.keys(gear).find(k=>['digSpeed','protection','moveSpeed','luck'].includes(k));
+      const statVal=gear[statKey];
+      const statLabel={digSpeed:'DIG',protection:'PROT',moveSpeed:'SPD',luck:'LUCK'}[statKey];
+      html+=`<div class="gear-item ${equipped?'equipped':''}" data-gear="${gear.id}">
+        <div class="rarity rarity-${rarity}"></div>
+        <div class="type">${gear.type}</div>
+        <div class="name" style="color:${RPG.RARITY_COLORS[gear.rarity]}">${gear.name}</div>
+        <div class="stat">${statLabel}: ${statVal}${statKey==='protection'?'':statKey==='digSpeed'||statKey==='moveSpeed'||statKey==='luck'?'x':''}</div>
+        <div class="desc">${gear.desc||''}</div>
+        ${equipped?'<div style="font-family:PS2P;font-size:8px;color:var(--g);margin-top:4px">EQUIPPED</div>':''}
+      </div>`;
+    }
+    html+='</div>';
+  }
+  
+  return html;
+}
+
+async function renderLeaderboard(){
+  const profile=RPG.getProfile();
+  let lbType='xp';
+  
+  async function load(type){
+    lbType=type;
+    const data=await RPG.fetchLeaderboard(type);
+    let html=`
+      <div class="lb-tabs">
+        <button data-lb="xp" class="${type==='xp'?'on':''}">BY XP</button>
+        <button data-lb="depth" class="${type==='depth'?'on':''}">BY DEPTH</button>
+      </div>
+    `;
+    
+    if(data.length===0){
+      html+='<p class="note">No rankings yet. Be the first!</p>';
+    }else{
+      html+='<div class="lb-list">';
+      data.forEach((row,i)=>{
+        const rank=i+1;
+        const rankClass=rank===1?'gold':rank===2?'silver':rank===3?'bronze':'';
+        const isMe=profile&&row.id===profile.id;
+        const pfpHtml=row.pfp?`<img src="${escHtml(row.pfp)}" alt="">`:'';
+        const value=type==='depth'?`${row.best_depth}M`:`${row.xp} XP`;
+        html+=`<div class="lb-row ${rank<=3?'top3':''} ${isMe?'equipped':''}">
+          <div class="lb-rank ${rankClass}">#${rank}</div>
+          <div class="lb-pfp">${pfpHtml}</div>
+          <div class="lb-name">${escHtml(row.name||'Trencher')}</div>
+          <div class="lb-value">${value}</div>
+        </div>`;
+      });
+      html+='</div>';
+    }
+    
+    $("#panelBody").innerHTML=html;
+    $$("[data-lb]").forEach(btn=>btn.onclick=()=>load(btn.dataset.lb));
+  }
+  
+  await load('xp');
+}
+
+function escHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+
 document.addEventListener("click",e=>{
   const n=e.target.closest("[data-nav]");
   if(n){e.preventDefault();const id=n.dataset.nav;
@@ -100,6 +281,21 @@ document.addEventListener("click",e=>{
   const p=e.target.closest("[data-play]");
   if(p){e.preventDefault();closePanel();start();const d=Game.findTicker(p.dataset.play);
     setTimeout(()=>hint(d!=null?`$${p.dataset.play} SEAM BURIED AT ${d}M. DIG DOWN!`:"KEEP DIGGING",5000),300)}
+  // Gear equip
+  const gear=e.target.closest("[data-gear]");
+  if(gear){
+    RPG.equipGear(gear.dataset.gear);
+    Haptics.selection();
+    Sfx.play("gem",0);
+    openPanel("inventory");
+  }
+  // Unequip slot
+  const slot=e.target.closest("[data-slot]");
+  if(slot){
+    RPG.unequipGear(slot.dataset.slot);
+    Haptics.selection();
+    openPanel("inventory");
+  }
 });
 
 // touch controls
@@ -110,11 +306,20 @@ $$("#touch button").forEach(b=>{
   b.addEventListener("pointerdown",on);b.addEventListener("pointerup",off);b.addEventListener("pointercancel",off);b.addEventListener("pointerleave",off);
 });
 
-// data
-BT.load().then(()=>{
+// data + RPG init
+Promise.all([
+  BT.load().catch(err=>{console.error(err);$("#tickerInner").textContent="DATA ERROR"}),
+  RPG.loadProfile().catch(err=>console.warn('Profile load failed:',err))
+]).then(()=>{
   Game.setHotList(BT.hot().map(h=>({ticker:h.coin.ticker,status:h.status})));
   $("#tickerInner").innerHTML=BT.tickerHTML()+BT.tickerHTML();
-}).catch(err=>{console.error(err);$("#tickerInner").textContent="COULD NOT LOAD data/calls.json (serve over http, not file://)"}).finally(()=>{
+  
+  // Connect to multiplayer
+  const profile=RPG.getProfile();
+  if(profile){
+    Multiplayer.connect(profile);
+  }
+}).finally(()=>{
   clearInterval(lt);$("#loadfill").style.width="100%";
   setTimeout(()=>{
     $("#loader").classList.add("done");
@@ -122,8 +327,17 @@ BT.load().then(()=>{
     MiniApp.ready();
     // Show username greeting if available
     const username=MiniApp.getUsername();
-    if(username)$("#greeting").textContent="WELCOME "+username.toUpperCase();
+    const profile=RPG.getProfile();
+    if(username){
+      $("#greeting").textContent="WELCOME "+username.toUpperCase();
+    }else if(profile&&profile.name){
+      $("#greeting").textContent="WELCOME "+profile.name.toUpperCase();
+    }
+    updateRpgHud();
     const h=location.hash.slice(1);if(TITLES[h])openPanel(h);else if(h==="play")start();
   },450);
 });
+
+// Periodic RPG HUD update (+ online count, which onHud only refreshes when lives/mult/depth change)
+setInterval(()=>{updateRpgHud();$("#onlineCount").textContent=Multiplayer.playerCount},1000);
 })();

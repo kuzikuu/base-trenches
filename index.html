@@ -33,10 +33,11 @@
   </a>
   <nav id="menu">
     <a href="#play" data-nav="play">PLAY</a>
+    <a href="#inventory" data-nav="inventory">GEAR</a>
+    <a href="#leaderboard" data-nav="leaderboard">RANKS</a>
     <a href="#hot" data-nav="hot">HOT LIST</a>
-    <a href="#calls" data-nav="calls">PREVIOUS CALLS</a>
-    <a href="#callers" data-nav="callers">CALLERS</a>
-    <a href="#about" data-nav="about">HOW IT WORKS</a>
+    <a href="#calls" data-nav="calls">CALLS</a>
+    <a href="#about" data-nav="about">ABOUT</a>
   </nav>
   <div class="tools">
     <button id="muteBtn" class="iconbtn" aria-label="Toggle sound" title="Sound (M)">SND ON</button>
@@ -56,6 +57,22 @@
       <div class="depth" id="depth">DEPTH 0M</div>
     </div>
     <div class="goal" id="goal"><span id="goalfill"></span><b>589x</b></div>
+    <div class="hudleft">
+      <div class="level" id="level">LV 1</div>
+      <div class="xpbar"><span id="xpfill"></span></div>
+      <div class="online-pill" id="online"><span id="onlineCount">0</span> ONLINE</div>
+    </div>
+    <div id="offlineBadge" class="offline-badge hidden">OFFLINE TRENCH</div>
+    <div id="chatBox" class="chat-box">
+      <div class="chat-emotes">
+        <button data-emote="POWER OF 9" aria-label="Power of 9">⚡9</button>
+        <button data-emote="MANIFESTING 589X" aria-label="Manifesting">🎯</button>
+        <button data-emote="LFG" aria-label="LFG">🚀</button>
+        <button data-emote="GM" aria-label="GM">☀️</button>
+      </div>
+      <input type="text" id="chatInput" maxlength="60" placeholder="Say something..." autocomplete="off">
+      <button id="chatSend" aria-label="Send">↵</button>
+    </div>
   </div>
   <div id="hint" class="hint hidden"></div>
 
@@ -112,7 +129,7 @@
       <button id="closePanel" class="iconbtn" aria-label="Close">✕ ESC</button>
     </div>
     <div class="paneltabs">
-      <button data-nav="hot">HOT LIST</button><button data-nav="calls">PREVIOUS CALLS</button><button data-nav="callers">CALLERS</button><button data-nav="about">HOW IT WORKS</button>
+      <button data-nav="inventory">GEAR</button><button data-nav="leaderboard">RANKS</button><button data-nav="hot">HOT LIST</button><button data-nav="calls">CALLS</button><button data-nav="about">ABOUT</button>
     </div>
     <div class="panelbody" id="panelBody"></div>
   </div>
@@ -122,8 +139,11 @@
 <script src="https://cdn.jsdelivr.net/npm/@farcaster/miniapp-sdk@0.3/dist/index.min.js"></script>
 <script src="js/font.js"></script>
 <script src="js/audio.js"></script>
+<script src="js/config.js"></script>
 <script src="js/haptics.js"></script>
 <script src="js/miniapp.js"></script>
+<script src="js/rpg.js"></script>
+<script src="js/multiplayer.js"></script>
 <script src="js/pickaxe.js"></script>
 <script src="js/data.js"></script>
 <script src="js/game.js"></script>
