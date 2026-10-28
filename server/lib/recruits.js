@@ -4,10 +4,10 @@
 // event tallies, presence counts or the world-map counts. Clients tag them [BOT].
 
 export const BOT_ID_PREFIX = 'bot:';
-export const BOT_TICK_MS = 1000;      // one cheap tick per second, only while humans are connected
-export const BOT_FILL_TARGET = 11;    // humans + recruits we aim for in a quiet room
-export const BOT_MAX = 10;
-export const BOT_CHAT_EVERY_S = 18;   // room-wide: about one canned line per 18 s
+export const BOT_TICK_MS = 2000;      // one cheap tick every 2 s, only while humans are connected (free-plan budget)
+export const BOT_FILL_TARGET = 7;     // humans + recruits we aim for in a quiet room
+export const BOT_MAX = 6;
+export const BOT_CHAT_EVERY_S = 25;   // room-wide: about one canned line per 18 s
 export const BOT_CHAT_MIN_GAP_MS = 7000; // never two recruit lines closer than this
 
 // World geometry mirrors js/game.js (TS=12, W=40, S=12, FLOOR=S+2).
@@ -67,7 +67,7 @@ export function isBotId(id) {
 }
 
 // How many recruits a room should have for this many connected humans.
-// 0 humans -> 0 (room can hibernate); 1 human -> 10; ramps down; 11+ humans -> 0.
+// 0 humans -> 0 (room can hibernate); 1 human -> 6; ramps down; 7+ humans -> 0.
 export function targetRecruitCount(humans) {
   if (!humans || humans <= 0) return 0;
   return Math.max(0, Math.min(BOT_MAX, BOT_FILL_TARGET - humans));

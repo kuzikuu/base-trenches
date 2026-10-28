@@ -25,7 +25,8 @@ import {
   CHAPTERS
 } from './lib/campaign.js';
 import {
-  handleEventsApi
+  handleEventsApi,
+  authorizeAdmin,
 } from './lib/events.js';
 import {
   BOT_TICK_MS,
@@ -65,6 +66,10 @@ const CHAT_RATE_LIMIT_MS = 2000;
 const CHAT_MAX_LENGTH = 60;
 const IDLE_MS = 15_000;
 const BOT_PAUSE_IDLE_MS = 60_000; // recruits freeze when every human has been idle this long
+// Free-plan guard: estimated billed DO requests per room per UTC day (fetch = 1, incoming
+// WebSocket message = 1/20). Past this, recruits switch off in that room until the next UTC day.
+const BOT_DAILY_BUDGET_DEFAULT = 15_000;
+const BOT_BUDGET_PERSIST_EVERY = 500; // units between storage writes of the counter
 const SQUAD_MAX = 9;
 const RAID_SURVIVES = 5; // boss raid = survive this many barrages in one session (js/campaign.js)
 
@@ -187,7 +192,14 @@ export class TrenchRoom {
     this.botSeq = 0;
     this.botTimer = null;
     this.lastBotTick = 0;
+    this.botsOff = false;        // admin kill switch (storage 'botsOff'), per room
+    this.budget = { day: '', units: 0, saved: 0 };
+    this.roomName = null;
     this.state.blockConcurrencyWhile(async () => {
+      const got = await this.state.storage.get(['botsOff', 'botBudget', 'roomName']);
+      this.botsOff = got.get('botsOff') === true;
+      this.budget = got.get('botBudget') || this.budget;
+      this.roomName = got.get('roomName') || null;
       this.seed = await this.state.storage.get('seed');
       if (!this.seed) {
         this.seed = (Math.random() * 1e9) | 0;
@@ -200,7 +212,21 @@ export class TrenchRoom {
   async fetch(request) {
     const url = new URL(request.url);
     const roomHeader = request.headers.get('X-BT-Room');
-    if (roomHeader) this.roomName = roomHeader;
+    if (roomHeader && roomHeader !== this.roomName) {
+      this.roomName = roomHeader;
+      await this.state.storage.put('roomName', roomHeader); // survives hibernation
+    }
+    this.countUnits(1);
+    if (url.pathname === '/bots') {
+      // Internal only (the Worker checks the admin key before forwarding).
+      if (request.method === 'POST') {
+        const { enabled } = await request.json().catch(() => ({}));
+        this.botsOff = enabled === false;
+        await this.state.storage.put('botsOff', this.botsOff);
+        if (this.botsOff) this.stopBots();
+      }
+      return Response.json(this.botStatus());
+    }
     if (request.method === 'POST' && url.pathname === '/shard-hint') {
       // Only 'main' keeps this: the highest overflow sector used recently, so presence can sum them.
       const n = Math.max(1, Math.min(ROOM_SHARDS, Number(url.searchParams.get('n')) || 1));
@@ -290,20 +316,53 @@ export class TrenchRoom {
   // One setTimeout chain at BOT_TICK_MS. It stops as soon as no human is connected,
   // so an empty room has no timers and can hibernate. After hibernation the next
   // human message restarts it (ensureBotTicker in webSocketMessage / handleJoin).
+  // ---- free-plan safeguards ----
+  dayKey(now = Date.now()) { return new Date(now).toISOString().slice(0, 10); }
+
+  countUnits(u, now = Date.now()) {
+    const day = this.dayKey(now);
+    if (this.budget.day !== day) this.budget = { day, units: 0, saved: 0 };
+    this.budget.units += u;
+    if (this.budget.units - this.budget.saved >= BOT_BUDGET_PERSIST_EVERY) {
+      this.budget.saved = this.budget.units;
+      this.state.storage.put('botBudget', this.budget).catch(() => {});
+    }
+  }
+
+  botBudgetLimit() {
+    const n = Number(this.env && this.env.BOT_DAILY_BUDGET);
+    return Number.isFinite(n) && n > 0 ? n : BOT_DAILY_BUDGET_DEFAULT;
+  }
+
+  botsAllowed(now = Date.now()) {
+    if (this.botsOff) return false;
+    if (this.env && String(this.env.BOTS_ENABLED || '').trim() === '0') return false;
+    // Recruits only in the public sectors (main, main-2 …), not in ad-hoc ?room= rooms.
+    if (this.roomName && !/^main(-\d+)?$/.test(this.roomName)) return false;
+    if (this.budget.day === this.dayKey(now) && this.budget.units >= this.botBudgetLimit()) return false;
+    return true;
+  }
+
+  botStatus() {
+    return { room: this.roomName, botsOff: this.botsOff, envDisabled: String((this.env && this.env.BOTS_ENABLED) || '').trim() === '0',
+      allowed: this.botsAllowed(), recruits: this.bots.size, budget: { day: this.budget.day, units: Math.round(this.budget.units), limit: this.botBudgetLimit() } };
+  }
+
   ensureBotTicker() {
     if (this.botTimer) return;
+    if (!this.botsAllowed()) { if (this.bots.size) this.stopBots(); return; }
     this.botTimer = setTimeout(() => { this.botTimer = null; this.botTick(); }, BOT_TICK_MS);
   }
 
   stopBots(excludeWs = null) {
     if (this.botTimer) { clearTimeout(this.botTimer); this.botTimer = null; }
-    for (const id of this.bots.keys()) this.broadcast({ type: 'leave', playerId: id, bot: true, playerCount: this.humanCount(excludeWs) }, excludeWs);
+    for (const id of this.bots.keys()) this.broadcast({ type: 'leave', playerId: id, bot: true, playerCount: this.humanCount(excludeWs), recruitCount: 0 }, excludeWs);
     this.bots.clear();
   }
 
   botTick(now = Date.now()) {
     const humans = this.humanCount();
-    if (humans === 0) { this.stopBots(); return; }
+    if (humans === 0 || !this.botsAllowed(now)) { this.stopBots(); return; }
     const dtMs = this.lastBotTick ? Math.min(3000, now - this.lastBotTick) : BOT_TICK_MS;
     this.lastBotTick = now;
     // Ramp one recruit per tick toward the target for this many humans.
@@ -364,6 +423,7 @@ export class TrenchRoom {
     try {
       const data = JSON.parse(message);
       const attachment = ws.deserializeAttachment() || {};
+      this.countUnits(1 / 20);
       if (attachment.playerId) this.ensureBotTicker();
       switch (data.type) {
         case 'join': await this.handleJoin(ws, data, attachment); break;
@@ -1258,6 +1318,29 @@ async function handleRequest(request, env, ctx) {
 
   if (path === '/api/health') {
     return json({ status: 'ok', time: Date.now() }, 200, origin);
+  }
+
+  // Recruit-bot kill switch. GET = status, POST {"enabled": false|true}. Admin key as Bearer.
+  // Applies to every public sector (main, main-2 … main-8); the flag lives in each room's storage.
+  if (path === '/api/admin/bots') {
+    if (!authorizeAdmin(request.headers.get('Authorization'), env.EVENTS_ADMIN_KEY)) {
+      return json({ error: 'unauthorized' }, 401, origin);
+    }
+    let body = null;
+    if (request.method === 'POST') {
+      const b = await request.json().catch(() => ({}));
+      if (typeof b.enabled !== 'boolean') return json({ error: 'enabled must be true or false' }, 400, origin);
+      body = JSON.stringify({ enabled: b.enabled });
+    } else if (request.method !== 'GET') {
+      return json({ error: 'method' }, 405, origin);
+    }
+    const rooms = await Promise.all(Array.from({ length: ROOM_SHARDS }, (_, i) => {
+      const name = shardName(i);
+      const stub = env.TRENCH_ROOM.get(env.TRENCH_ROOM.idFromName(name));
+      return stub.fetch(new Request('http://internal/bots', { method: body ? 'POST' : 'GET', body, headers: { 'X-BT-Room': name } }))
+        .then((r) => r.json()).catch((e) => ({ room: name, error: String(e && e.message || e) }));
+    }));
+    return json({ ok: true, envDisabled: String(env.BOTS_ENABLED || '').trim() === '0', rooms }, 200, origin);
   }
 
   if (path === '/api/campaign') {
