@@ -1,6 +1,6 @@
 # BASE TRENCHES · POWER OF 9
 
-**Live:** https://kuzikuu.github.io/base-trenches/
+**Live:** https://base-trenches.pages.dev/ (Cloudflare Pages, mini app root) · mirror: https://kuzikuu.github.io/base-trenches/
 
 **Manifesting 589x.** This is the website and game prototype for Base Trenches, an anonymous meme-coin crew on Base.
 

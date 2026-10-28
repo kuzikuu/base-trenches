@@ -3,7 +3,7 @@
 (function(){
 "use strict";
 
-const HOME_URL = window.BT_HOME_URL || 'https://kuzikuu.github.io/base-trenches/';
+const HOME_URL = window.BT_HOME_URL || 'https://base-trenches.pages.dev/';
 let sdk = null;
 let context = null;
 let isInHost = false;
