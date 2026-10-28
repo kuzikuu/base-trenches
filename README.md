@@ -79,7 +79,7 @@ The site only **reads** this file. The Telegram bot (or a backend or GitHub Acti
     "thresholds": { "tags": 9, "comments": 5, "retweets": 8, "likes": 9 },
     "hit_multiple": 2                  // a call counts as a "hit" when ATH >= 2x
   },
-  "links": { "x": "https://x.com/YOUR_X_HANDLE", "telegram": "https://t.me/YOUR_TELEGRAM_GROUP" },
+  "links": { "x": "https://x.com/powerof9base", "telegram": "https://t.me/YOUR_TELEGRAM_GROUP" },
 
   "coins": [{                          // every coin ever tagged
     "id": "c1", "ticker": "EXAMPLE1", "name": "Example Dig (fake)", "chain": "base",

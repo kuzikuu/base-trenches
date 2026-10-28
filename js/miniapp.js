@@ -62,7 +62,7 @@ function getDisplayName() {
 }
 
 function shareScore(mult, depth) {
-  const text = `⛏️ I dug to x${mult.toFixed(2)} at ${depth}m in Base Trenches!\n\nPower of 9. Manifesting 589x.`;
+  const text = `⛏️ I dug to x${mult.toFixed(2)} at ${depth}m in Base Trenches!\n\nPower of 9. Manifesting 589x. @PowerOf9Base`;
   const url = HOME_URL;
   
   if (sdk && sdk.actions && sdk.actions.composeCast) {
