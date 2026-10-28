@@ -1,0 +1,10 @@
+{
+  "name": "base-trenches-server",
+  "private": true,
+  "type": "module",
+  "description": "Base Trenches multiplayer Worker (Durable Objects) — testable libs in lib/",
+  "scripts": {
+    "test": "node --test test/",
+    "deploy": "wrangler deploy"
+  }
+}

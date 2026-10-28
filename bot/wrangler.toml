@@ -8,8 +8,11 @@ workers_dev = true
 [vars]
 GROUP_ID = "-1004397164578"
 CHANNEL_ID = "-1003874691876"
+VOTE_CHAT_ID = "-1004397164578"
+ANNOUNCE_CHAT_ID = "-1003874691876"
 OWNER_TG_IDS = "1465096325"
 BOT_USERNAME = "Powerof9BaseBot"
+GAME_SERVER_URL = "https://base-trenches-server.base-trenches.workers.dev"
 
 [[durable_objects.bindings]]
 name = "BOT"

@@ -1,7 +1,7 @@
 // Wiring: loader, navigation, panels, HUD, touch controls, mini-app + haptics + RPG + multiplayer.
 (function(){
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
-const TITLES={hot:"HOT LIST",calls:"CALLS",callers:"CALLERS",about:"ABOUT",inventory:"GEAR",leaderboard:"RANKS"};
+const TITLES={hot:"HOT LIST",calls:"CALLS",callers:"CALLERS",about:"ABOUT",inventory:"GEAR",leaderboard:"RANKS",campaign:"CAMPAIGN",events:"EVENTS",squad:"SQUAD"};
 let current=null,wasPlaying=false,lastStats=null;
 const touch=matchMedia("(pointer:coarse)").matches||"ontouchstart" in window;
 
@@ -87,7 +87,15 @@ function updateRpgHud(){
   const {level,xpInLevel,xpForNext}=BT_CONFIG.levelFromXp(profile.xp);
   $("#level").textContent=`LV ${level}`;
   $("#xpfill").style.width=((xpInLevel/xpForNext)*100).toFixed(1)+"%";
+  const handle=profile.x_handle||'';
+  const wallet=profile.wallet?shortWallet(profile.wallet):'';
+  const idEl=$("#identity");
+  if(idEl){
+    idEl.innerHTML=(handle?`<span class="id-x">${escHtml(handle)}</span>`:'')+(wallet?`<span class="id-w">${escHtml(wallet)}</span>`:'');
+    idEl.classList.toggle('hidden',!handle&&!wallet);
+  }
 }
+function shortWallet(a){return a&&a.length>10?a.slice(0,6)+'…'+a.slice(-4):a||'';}
 
 // Level up handler
 RPG.onLevelUp((newLevel,oldLevel)=>{
@@ -175,12 +183,20 @@ function openPanel(id){
   }else if(id==='leaderboard'){
     $("#panelBody").innerHTML='<p class="note">Loading...</p>';
     renderLeaderboard();
+  }else if(id==='campaign'){
+    $("#panelBody").innerHTML=typeof Campaign!=='undefined'?Campaign.renderMap():'<p class="note">Campaign loading…</p>';
+  }else if(id==='events'){
+    $("#panelBody").innerHTML=typeof BTEvents!=='undefined'?BTEvents.render():'<p class="note">Loading events…</p>';
+    if(typeof BTEvents!=='undefined')BTEvents.refresh();
+  }else if(id==='squad'){
+    $("#panelBody").innerHTML='<p class="note">Loading squad…</p>';
+    renderSquad();
   }else{
     $("#panelBody").innerHTML=BT.render(id);
   }
   
   $("#panelBody").scrollTop=0;
-  $(".example").style.display=(id==="about"||id==="inventory"||id==="leaderboard")?"none":"";
+  $(".example").style.display=(id==="about"||id==="inventory"||id==="leaderboard"||id==="campaign"||id==="events"||id==="squad")?"none":"";
   $$(".paneltabs button,#menu a").forEach(b=>b.classList.toggle("on",b.dataset.nav===id));
   $("#panelWrap").classList.remove("hidden");$("#menu").classList.remove("open");
   if(location.hash!=="#"+id)history.replaceState(null,"","#"+id);
@@ -209,6 +225,7 @@ function renderInventory(){
       <div class="profile-info">
         <div class="profile-name">${escHtml(profile.name)}</div>
         <div class="profile-level">Level ${level} · ${profile.xp} XP (${xpInLevel}/${xpForNext})</div>
+        <div class="profile-ids">${profile.x_handle?escHtml(profile.x_handle):''}${profile.wallet?' · '+escHtml(shortWallet(profile.wallet)):''}${(profile.titles||[]).length?' · '+escHtml((profile.titles||[]).join(' · ')):''}</div>
         <div class="profile-stats">
           <div><b>BEST DEPTH</b>${profile.best_depth}M</div>
           <div><b>DIAMONDS</b>${profile.total_diamonds}</div>
@@ -268,6 +285,7 @@ async function renderLeaderboard(){
       <div class="lb-tabs">
         <button data-lb="xp" class="${type==='xp'?'on':''}">BY XP</button>
         <button data-lb="depth" class="${type==='depth'?'on':''}">BY DEPTH</button>
+        <button data-lb="squad" class="${type==='squad'?'on':''}">SQUADS</button>
       </div>
     `;
     
@@ -280,11 +298,12 @@ async function renderLeaderboard(){
         const rankClass=rank===1?'gold':rank===2?'silver':rank===3?'bronze':'';
         const isMe=profile&&row.id===profile.id;
         const pfpHtml=row.pfp?`<img src="${escHtml(row.pfp)}" alt="">`:'';
-        const value=type==='depth'?`${row.best_depth}M`:`${row.xp} XP`;
+        const value=type==='depth'?`${row.best_depth}M`:type==='squad'?`${row.xp} SXP`: `${row.xp} XP`;
+        const extra=row.x_handle?` <span class="sub">${escHtml(row.x_handle)}</span>`:'';
         html+=`<div class="lb-row ${rank<=3?'top3':''} ${isMe?'equipped':''}">
           <div class="lb-rank ${rankClass}">#${rank}</div>
           <div class="lb-pfp">${pfpHtml}</div>
-          <div class="lb-name">${escHtml(row.name||'Trencher')}</div>
+          <div class="lb-name">${escHtml(row.name||row.code||'Trencher')}${extra}</div>
           <div class="lb-value">${value}</div>
         </div>`;
       });
@@ -299,6 +318,92 @@ async function renderLeaderboard(){
 }
 
 function escHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+
+async function squadAuthHeaders(){
+  const token=await RPG.getAuthToken();
+  const profile=RPG.getProfile();
+  const h={'Content-Type':'application/json'};
+  if(token)h.Authorization='Bearer '+token;
+  else if(profile&&String(profile.id).startsWith('guest:'))h['X-Guest-Secret']=RPG.getGuestSecret();
+  return h;
+}
+
+async function renderSquad(){
+  const profile=RPG.getProfile();
+  const base=BT_CONFIG.serverUrl.replace(/\/$/,'');
+  let mine=null;
+  try{
+    const q=new URLSearchParams();
+    if(profile&&profile.id&&!profile.fid&&!(String(profile.id).startsWith('did:privy:')))q.set('profileId',profile.id);
+    const headers=await squadAuthHeaders();
+    const r=await fetch(base+'/api/squads/me'+(q.toString()?'?'+q:''),{headers});
+    mine=await r.json();
+  }catch(e){}
+  const sq=mine&&mine.squad;
+  let html='<p class="note">Squads of up to 9. Share a code, share an objective, share XP. Leaderboard is on RANKS → SQUADS.</p>';
+  if(!sq){
+    html+=`<div class="squad-forms">
+      <form id="squadCreate" class="login-form"><input name="name" maxlength="24" placeholder="SQUAD NAME" required><input name="objective" maxlength="80" placeholder="OBJECTIVE (dig 90)" ><button>CREATE</button></form>
+      <form id="squadJoin" class="login-form"><input name="code" maxlength="8" placeholder="CODE" required><button>JOIN</button></form>
+    </div>`;
+  }else{
+    const members=(sq.members||[]).map(m=>`<li><b>${escHtml(m.name)}</b> LV ${m.level}${m.x_handle?' '+escHtml(m.x_handle):''}</li>`).join('');
+    const pct=sq.objective_target?Math.min(100,100*sq.objective_progress/sq.objective_target):0;
+    html+=`<div class="squad-card">
+      <h3 class="dotmatrix">${escHtml(sq.name)}</h3>
+      <div class="squad-code">CODE ${escHtml(sq.code)}</div>
+      <p>${escHtml(sq.objective||'')} · ${sq.objective_progress||0}/${sq.objective_target||0}</p>
+      <div class="xpbar wide"><span style="width:${pct}%"></span></div>
+      <div>SQUAD XP ${sq.xp||0} · ${ (sq.members||[]).length }/9</div>
+      <ol class="squad-members">${members}</ol>
+      <button type="button" id="squadLeave">LEAVE SQUAD</button>
+    </div>`;
+  }
+  $("#panelBody").innerHTML=html;
+  const create=$("#squadCreate");
+  if(create)create.onsubmit=async e=>{
+    e.preventDefault();
+    const fd=new FormData(create);
+    await fetch(base+'/api/squads',{method:'POST',headers:await squadAuthHeaders(),body:JSON.stringify({name:fd.get('name'),objective:fd.get('objective'),profileId:profile&&profile.id})});
+    renderSquad();
+  };
+  const join=$("#squadJoin");
+  if(join)join.onsubmit=async e=>{
+    e.preventDefault();
+    const fd=new FormData(join);
+    await fetch(base+'/api/squads/join',{method:'POST',headers:await squadAuthHeaders(),body:JSON.stringify({code:fd.get('code'),profileId:profile&&profile.id})});
+    renderSquad();
+  };
+  const leave=$("#squadLeave");
+  if(leave)leave.onclick=async()=>{
+    await fetch(base+'/api/squads/leave',{method:'POST',headers:await squadAuthHeaders(),body:JSON.stringify({profileId:profile&&profile.id})});
+    renderSquad();
+  };
+}
+
+function renderRoster(list){
+  const el=$("#rosterPanel");
+  if(!el)return;
+  const rows=list||[];
+  el.innerHTML=rows.length?rows.map(p=>`<div class="roster-row ${p.status||''}">
+    <span class="dot ${p.status==='idle'?'idle':'on'}"></span>
+    <b>${escHtml(p.name||'Trencher')}</b>
+    <span>LV ${p.level||1}</span>
+    <span>${escHtml(p.xHandle||'')}</span>
+    <span class="st">${p.status==='idle'?'IDLE':'ACTIVE'}</span>
+  </div>`).join(''):'<div class="roster-row">Nobody else in the trench.</div>';
+}
+
+async function refreshPresence(){
+  try{
+    const r=await fetch(BT_CONFIG.serverUrl.replace(/\/$/,'')+'/presence',{cache:'no-store'});
+    const d=await r.json();
+    const n=d.online||0;
+    const home=$("#homeOnline");
+    if(home)home.textContent=n?`${n} IN THE TRENCH`:'TRENCH QUIET';
+    if(!Multiplayer.connected)$("#onlineCount").textContent=n;
+  }catch(e){}
+}
 
 document.addEventListener("click",e=>{
   const n=e.target.closest("[data-nav]");
@@ -351,6 +456,9 @@ Promise.all([
   if(profile){
     Multiplayer.connect(profile);
   }
+  if(typeof BTEvents!=='undefined')BTEvents.start();
+  refreshPresence();
+  setInterval(refreshPresence,15000);
 }).finally(()=>{
   clearInterval(lt);$("#loadfill").style.width="100%";
   setTimeout(()=>{
@@ -371,5 +479,33 @@ Promise.all([
 });
 
 // Periodic RPG HUD update (+ online count, which onHud only refreshes when lives/mult/depth change)
-setInterval(()=>{updateRpgHud();$("#onlineCount").textContent=Multiplayer.playerCount},1000);
+setInterval(()=>{updateRpgHud();if(Multiplayer.connected)$("#onlineCount").textContent=Multiplayer.playerCount},1000);
+
+// Privy login button (hidden when BT_PRIVY_APP_ID is empty)
+if(typeof BTPrivy!=='undefined'&&BTPrivy.enabled()){
+  $("#loginBtn").classList.remove("hidden");
+  $("#loginBtn").onclick=()=>{BTPrivy.show();Haptics.selection()};
+  BTPrivy.onChange(async snap=>{
+    $("#loginBtn").textContent=snap.did?'ACCOUNT':'LOGIN';
+    const profile=RPG.getProfile();
+    if(snap.did&&profile){
+      profile.id=snap.did;
+      if(snap.xHandle)profile.x_handle=snap.xHandle;
+      if(snap.wallet)profile.wallet=snap.wallet;
+      await RPG.saveToServer();
+      if(RPG.maybeMigrate)await RPG.maybeMigrate(snap);
+      Multiplayer.disconnect();
+      Multiplayer.connect(RPG.getProfile());
+      updateRpgHud();
+    }
+    updateRpgHud();
+  });
+}
+
+// Live roster
+if($("#rosterBtn")){
+  $("#rosterBtn").classList.remove("hidden");
+  $("#rosterBtn").onclick=()=>{$("#rosterPanel").classList.toggle("hidden");Haptics.selection()};
+}
+Multiplayer.onRoster(list=>renderRoster(list));
 })();

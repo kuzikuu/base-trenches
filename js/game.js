@@ -148,6 +148,8 @@ function hurt(n,fx,fy){
   const dir=Math.sign(P.x+P.w/2-(fx??P.x))||1;P.vx=dir*90;P.vy=-110;
   burst(P.x+4,P.y+5,14,["#ff2bd6",BLUE,"#fff"],90);
   cb.onHit&&cb.onHit(n);
+  if(typeof Multiplayer!=='undefined')Multiplayer.sendEvent({kind:'hit'});
+  if(typeof Campaign!=='undefined')Campaign.note('hit');
   if(lives<=0){dead=1.2;Sfx.play("over");burst(P.x+4,P.y+5,40,[BLUE,"#ff2bd6","#16e0ff","#ffd400"],140,250,1.2)}
   hud();
 }
@@ -165,6 +167,10 @@ function explode(tx,ty,r,dmg){
   addShake(10);flash=.18;glitch=.3;Sfx.play("boom");
   const pd=Math.hypot(P.x+P.w/2-cx,P.y+P.h/2-cy);
   if(pd<(r+.6)*TS)hurt(dmg||2,cx,cy);
+  else if(mode==="play"&&!dead){
+    if(typeof Multiplayer!=='undefined')Multiplayer.sendEvent({kind:'survive'});
+    if(typeof Campaign!=='undefined')Campaign.note('survive');
+  }
   timers.scan=0;
 }
 
@@ -199,13 +205,25 @@ function dig(){
     gems++;bump(GEM_X);addText(hx-8,hy-8,"x"+GEM_X.toFixed(2),BLUE);Sfx.play("gem",gems%5);
     burst(hx,hy,12,["#16e0ff","#fff",BLUE],100,120);
     if(typeof Haptics!=='undefined')Haptics.notification('success');
-    if(typeof RPG!=='undefined'){RPG.addXp(5,'diamond');RPG.tryGearDrop(maxDepth);}
+    if(typeof RPG!=='undefined'){
+      RPG.addXp(5,'diamond');
+      if(typeof Multiplayer==='undefined'||!Multiplayer.connected)RPG.tryGearDrop(maxDepth);
+    }
+    // Rare relic find on a gem at depth
+    if(maxDepth>8&&hash2(x,y,seed+21)<.12){
+      if(typeof Multiplayer!=='undefined')Multiplayer.sendEvent({kind:'relic',x,y});
+      if(typeof Campaign!=='undefined')Campaign.note('relic');
+      addText(hx-16,hy-16,"RELIC", "#ffd400");
+    }
   }
   if(t===T.POWER){
     powerGems++;bump(POWER_X);Sfx.play("gem",4);
     burst(hx,hy,18,["#ff2bd6","#ffd400","#16e0ff","#fff"],130,100);
     if(typeof Haptics!=='undefined')Haptics.notification('success');
-    if(typeof RPG!=='undefined'){RPG.addXp(10,'power');RPG.tryGearDrop(maxDepth);}
+    if(typeof RPG!=='undefined'){
+      RPG.addXp(10,'power');
+      if(typeof Multiplayer==='undefined'||!Multiplayer.connected)RPG.tryGearDrop(maxDepth);
+    }
     const s=seams.find(s=>x>=s.x&&x<s.x+3&&y>=s.y&&y<s.y+3);
     if(s){s.left--;addText(hx-14,hy-10,"$"+s.ticker+" "+(9-s.left)+"/9","#ff2bd6");
       if(s.left===0){Sfx.play("power");showBanner("$"+s.ticker+" POWERED UP");flash=.15;glitch=.35;addShake(6);if(typeof Haptics!=='undefined')Haptics.notification('success')}}}
@@ -266,9 +284,10 @@ function update(dt){
     if(depth-lastDepthXp>=5){
       lastDepthXp=depth;
       if(typeof RPG!=='undefined')RPG.addXp(2,'depth');
+      if(typeof Campaign!=='undefined')Campaign.note('depth',depth);
     }
     if(maxDepth>=depthBonusAt){bump(DEPTH_X);addText(P.x-10,P.y-8,depthBonusAt+"M x"+DEPTH_X,"#ff2bd6");depthBonusAt+=25;
-      if(typeof RPG!=='undefined')RPG.tryGearDrop(maxDepth);
+      if(typeof RPG!=='undefined'&&(typeof Multiplayer==='undefined'||!Multiplayer.connected))RPG.tryGearDrop(maxDepth);
     }
     hud()}
   clampCam(false);
@@ -300,7 +319,11 @@ function update(dt){
     if(b.x>0&&b.x<W*TS&&solidAt(tx,ty)){b.dead=true;burst(b.x,b.y,5,["#ffd400","#fff",BLUE],60,150,.3);continue}
     if(b.x<Math.min(0,cam.x)-400||b.x>Math.max(W*TS,cam.x+VW)+400)b.dead=true;
     if(playing&&b.y>P.y&&b.y<P.y+P.h&&b.x>P.x-2&&b.x<P.x+P.w+2){b.dead=true;hurt(1,b.x-b.vx,b.y)}
-    else if(playing&&!b.pinged&&Math.abs(b.x-P.x)<20&&Math.abs(b.y-P.y)<30){b.pinged=true;Sfx.play("ping")}
+    else if(playing&&!b.pinged&&Math.abs(b.x-P.x)<20&&Math.abs(b.y-P.y)<30){
+      b.pinged=true;Sfx.play("ping");
+      if(typeof Multiplayer!=='undefined')Multiplayer.sendEvent({kind:'dodge'});
+      if(typeof Campaign!=='undefined')Campaign.note('dodge');
+    }
     if(rng()<.3)parts.push({x:b.x-Math.sign(b.vx)*4,y:b.y,vx:0,vy:0,g:0,l:.12,c:rng()<.5?"#ffd400":"#ff2bd6",s:1});
   }
   bullets=bullets.filter(b=>!b.dead);

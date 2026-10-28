@@ -1,5 +1,30 @@
 // Base Trenches Multiplayer Server
-// Cloudflare Worker with Durable Objects for real-time multiplayer + RPG progression
+// Cloudflare Worker with Durable Objects: TrenchRoom, Profiles, Events
+
+import {
+  verifyFarcasterToken as verifyFcJwt,
+  verifyPrivyToken as verifyPrivyJwt
+} from './lib/jwt.js';
+import {
+  scoreValidatedEvent,
+  createXpWindow,
+  depthFromY,
+  tileKey,
+  TILE_SIZE,
+  TRENCH_FLOOR_TILE,
+  DEPTH_STEP_M,
+  levelFromXp
+} from './lib/xp.js';
+import {
+  normalizeProgress,
+  noteStat,
+  completeMission,
+  campaignPublic,
+  CHAPTERS
+} from './lib/campaign.js';
+import {
+  handleEventsApi
+} from './lib/events.js';
 
 const CORS_ORIGINS = [
   'https://base-trenches.pages.dev',
@@ -8,25 +33,23 @@ const CORS_ORIGINS = [
   'http://localhost:9999'
 ];
 
-const FARCASTER_QUICK_AUTH_ISSUER = 'https://auth.farcaster.xyz';
-// Quick Auth tokens are issued with aud = the mini app's domain (not the API host)
-const QUICK_AUTH_AUDIENCES = ['base-trenches.pages.dev', 'kuzikuu.github.io'];
 const GUEST_ID_RE = /^guest:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const PRIVY_ID_RE = /^did:privy:[a-zA-Z0-9]+$/;
 const MAX_PLAYERS_PER_ROOM = 50;
-// Name of the single Profiles DO instance. Bump to start a fresh leaderboard season.
 const PROFILES_SHARD = 'season-1';
-const BROADCAST_INTERVAL_MS = 100; // 10Hz
-const XP_RATE_LIMIT_WINDOW_MS = 1000;
-const XP_MAX_PER_WINDOW = 50;
+const EVENTS_SHARD = 'calendar-1';
+const BROADCAST_INTERVAL_MS = 100;
 const CHAT_RATE_LIMIT_MS = 2000;
 const CHAT_MAX_LENGTH = 60;
+const IDLE_MS = 15_000;
+const SQUAD_MAX = 9;
 
 const PROFANITY_WORDS = ['fuck', 'shit', 'ass', 'bitch', 'damn', 'cunt', 'dick', 'cock', 'pussy', 'fag', 'nigger', 'retard'];
 
 function filterProfanity(text) {
   let filtered = text;
   for (const word of PROFANITY_WORDS) {
-    const regex = new RegExp(`\\b${word}\\b`, 'gi'); // word boundaries so "pass"/"Bass" survive
+    const regex = new RegExp(`\\b${word}\\b`, 'gi');
     filtered = filtered.replace(regex, '*'.repeat(word.length));
   }
   return filtered;
@@ -36,38 +59,28 @@ function corsHeaders(origin) {
   const allowed = CORS_ORIGINS.includes(origin) ? origin : CORS_ORIGINS[0];
   return {
     'Access-Control-Allow-Origin': allowed,
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Guest-Secret',
     'Access-Control-Max-Age': '86400',
     'Vary': 'Origin'
   };
 }
 
-// Level curve: XP needed for level N
-function xpForLevel(level) {
-  return Math.floor(100 * Math.pow(1.5, level - 1));
+function json(obj, status, origin) {
+  return new Response(JSON.stringify(obj), {
+    status: status || 200,
+    headers: { 'Content-Type': 'application/json', ...corsHeaders(origin || '') }
+  });
 }
 
-function levelFromXp(xp) {
-  let level = 1;
-  let totalXp = 0;
-  while (totalXp + xpForLevel(level) <= xp) {
-    totalXp += xpForLevel(level);
-    level++;
-  }
-  return level;
-}
-
-// Gear definitions
 const GEAR_TYPES = ['pickaxe', 'helmet', 'boots', 'charm'];
-const GEAR_RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 const GEAR_TEMPLATES = {
   pickaxe: [
     { name: 'Rusty Pick', rarity: 0, digSpeed: 1.0 },
     { name: 'Iron Pick', rarity: 1, digSpeed: 1.15 },
     { name: 'Steel Pick', rarity: 2, digSpeed: 1.3 },
     { name: 'Diamond Pick', rarity: 3, digSpeed: 1.5 },
-    { name: 'Trencher\'s Fury', rarity: 4, digSpeed: 1.8 }
+    { name: "Trencher's Fury", rarity: 4, digSpeed: 1.8 }
   ],
   helmet: [
     { name: 'Cloth Cap', rarity: 0, protection: 0 },
@@ -79,14 +92,14 @@ const GEAR_TEMPLATES = {
   boots: [
     { name: 'Worn Boots', rarity: 0, moveSpeed: 1.0 },
     { name: 'Leather Boots', rarity: 1, moveSpeed: 1.1 },
-    { name: 'Runner\'s Boots', rarity: 2, moveSpeed: 1.2 },
+    { name: "Runner's Boots", rarity: 2, moveSpeed: 1.2 },
     { name: 'Swift Treads', rarity: 3, moveSpeed: 1.35 },
     { name: 'Windwalkers', rarity: 4, moveSpeed: 1.5 }
   ],
   charm: [
     { name: 'Lucky Penny', rarity: 0, luck: 1.0 },
     { name: 'Four-Leaf Clover', rarity: 1, luck: 1.1 },
-    { name: 'Rabbit\'s Foot', rarity: 2, luck: 1.25 },
+    { name: "Rabbit's Foot", rarity: 2, luck: 1.25 },
     { name: 'Golden Horseshoe', rarity: 3, luck: 1.4 },
     { name: 'Star of Fortune', rarity: 4, luck: 1.6 }
   ]
@@ -95,45 +108,50 @@ const GEAR_TEMPLATES = {
 function generateGearDrop(depth) {
   const type = GEAR_TYPES[Math.floor(Math.random() * GEAR_TYPES.length)];
   const templates = GEAR_TEMPLATES[type];
-  
-  // Rarity based on depth
   let rarityChances = [0.6, 0.25, 0.1, 0.04, 0.01];
   if (depth > 50) rarityChances = [0.4, 0.3, 0.2, 0.08, 0.02];
   if (depth > 100) rarityChances = [0.2, 0.3, 0.3, 0.15, 0.05];
   if (depth > 200) rarityChances = [0.1, 0.2, 0.35, 0.25, 0.1];
-  
   const roll = Math.random();
-  let cumulative = 0;
-  let rarityIndex = 0;
+  let cumulative = 0, rarityIndex = 0;
   for (let i = 0; i < rarityChances.length; i++) {
     cumulative += rarityChances[i];
-    if (roll < cumulative) {
-      rarityIndex = i;
-      break;
-    }
+    if (roll < cumulative) { rarityIndex = i; break; }
   }
-  
-  const template = templates[rarityIndex];
-  return {
-    id: crypto.randomUUID(),
-    type,
-    ...template,
-    foundAt: Date.now(),
-    foundDepth: depth
-  };
+  return { id: crypto.randomUUID(), type, ...templates[rarityIndex], foundAt: Date.now(), foundDepth: depth };
+}
+
+function sanitizeHandle(h) {
+  const m = String(h || '').trim().match(/^@?([A-Za-z0-9_]{1,15})$/);
+  return m ? '@' + m[1] : null;
+}
+
+function sanitizeWallet(w) {
+  const m = String(w || '').trim().match(/^(0x[a-fA-F0-9]{40})$/);
+  return m ? m[1] : null;
+}
+
+function validProfileId(id) {
+  return typeof id === 'string' && (GUEST_ID_RE.test(id) || /^fid:\d+$/.test(id) || PRIVY_ID_RE.test(id));
+}
+
+function squadCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let s = '';
+  for (let i = 0; i < 6; i++) s += alphabet[(Math.random() * alphabet.length) | 0];
+  return s;
 }
 
 // ============================================
-// TrenchRoom Durable Object - Real-time multiplayer
+// TrenchRoom Durable Object
 // ============================================
 export class TrenchRoom {
   constructor(state, env) {
     this.state = state;
     this.env = env;
-    this.sessions = new Map(); // WebSocket -> player data
+    this.dugBlocks = new Map();
     this.lastBroadcast = 0;
-    this.dugBlocks = new Map(); // "x,y" -> timestamp
-    this.seed = null; // shared world seed so every client generates the same trench
+    this.seed = null;
     this.state.blockConcurrencyWhile(async () => {
       this.seed = await this.state.storage.get('seed');
       if (!this.seed) {
@@ -141,58 +159,62 @@ export class TrenchRoom {
         await this.state.storage.put('seed', this.seed);
       }
     });
-    
-    // Use WebSocket Hibernation API
-    this.state.setWebSocketAutoResponse(
-      new WebSocketRequestResponsePair('ping', 'pong')
-    );
+    this.state.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
   }
 
   async fetch(request) {
     const url = new URL(request.url);
-    
     if (request.headers.get('Upgrade') === 'websocket') {
       if (this.state.getWebSockets().length >= MAX_PLAYERS_PER_ROOM) {
         return new Response('Room full', { status: 503 });
       }
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);
-      
-      // Accept with hibernation
       this.state.acceptWebSocket(server);
-      
-      // Initialize session data
       const sessionId = crypto.randomUUID();
-      // Profile id verified by the Worker (Quick Auth token or guest secret); null if unverified
       const verifiedProfileId = request.headers.get('X-BT-Profile') || null;
-      server.serializeAttachment({ sessionId, verifiedProfileId, joined: Date.now() });
-      
+      server.serializeAttachment({
+        sessionId,
+        verifiedProfileId,
+        joined: Date.now(),
+        xpWindow: createXpWindow(),
+        lastDepthAwarded: 0
+      });
       return new Response(null, { status: 101, webSocket: client });
     }
-    
+    if (request.method === 'GET' && (url.pathname === '/presence' || url.pathname === '/')) {
+      return Response.json(this.presence());
+    }
     return new Response('Expected WebSocket', { status: 400 });
+  }
+
+  presence() {
+    const now = Date.now();
+    const players = this.getActivePlayers(null, now);
+    return {
+      online: players.length,
+      players: players.map(p => ({
+        id: p.id,
+        name: p.name,
+        level: p.level,
+        xHandle: p.xHandle || null,
+        status: p.status
+      }))
+    };
   }
 
   async webSocketMessage(ws, message) {
     try {
       const data = JSON.parse(message);
       const attachment = ws.deserializeAttachment() || {};
-      
       switch (data.type) {
-        case 'join':
-          await this.handleJoin(ws, data, attachment);
-          break;
-        case 'state':
-          await this.handleStateUpdate(ws, data, attachment);
-          break;
-        case 'dig':
-          await this.handleDig(ws, data, attachment);
-          break;
-        case 'chat':
-          await this.handleChat(ws, data, attachment);
-          break;
+        case 'join': await this.handleJoin(ws, data, attachment); break;
+        case 'state': await this.handleStateUpdate(ws, data, attachment); break;
+        case 'dig': await this.handleDig(ws, data, attachment); break;
+        case 'chat': await this.handleChat(ws, data, attachment); break;
+        case 'event': await this.handleGameEvent(ws, data, attachment); break;
         case 'xp':
-          await this.handleXpClaim(ws, data, attachment);
+          // Client XP amounts are ignored. Progression is event-scored.
           break;
       }
     } catch (e) {
@@ -214,22 +236,20 @@ export class TrenchRoom {
   }
 
   async handleJoin(ws, data, attachment) {
-    if (attachment.playerId) return; // already joined
-    // Room identity is always the server-issued session id (unique per socket, can't be spoofed)
+    if (attachment.playerId) return;
     const playerId = attachment.sessionId;
     attachment.playerId = playerId;
     attachment.name = filterProfanity(String(data.name || 'Trencher').slice(0, 20));
     attachment.pfp = typeof data.pfp === 'string' && /^https:\/\//.test(data.pfp) ? data.pfp.slice(0, 512) : null;
     attachment.level = Math.max(1, Math.min(999, Math.floor(Number(data.level)) || 1));
     attachment.equipped = data.equipped || {};
+    attachment.xHandle = sanitizeHandle(data.xHandle || data.x_handle);
     attachment.lastUpdate = Date.now();
-    attachment.lastXpClaim = 0;
-    attachment.xpThisWindow = 0;
     attachment.lastChat = 0;
-    
+    attachment.xpWindow = createXpWindow();
+    attachment.lastDepthAwarded = 0;
     ws.serializeAttachment(attachment);
-    
-    // Send current state to new player
+
     const players = this.getActivePlayers();
     ws.send(JSON.stringify({
       type: 'init',
@@ -237,19 +257,24 @@ export class TrenchRoom {
       seed: this.seed,
       players,
       dugBlocks: Array.from(this.dugBlocks.entries()).slice(-500),
-      playerCount: players.length
+      playerCount: players.length,
+      roster: this.presence().players
     }));
-    
-    // Broadcast join to others
-    this.broadcast({ type: 'join', playerId, name: attachment.name, pfp: attachment.pfp, level: attachment.level, playerCount: players.length }, ws);
+    this.broadcast({
+      type: 'join',
+      playerId,
+      name: attachment.name,
+      pfp: attachment.pfp,
+      level: attachment.level,
+      xHandle: attachment.xHandle,
+      playerCount: players.length
+    }, ws);
   }
 
   async handleStateUpdate(ws, data, attachment) {
     if (!attachment.playerId) return;
-    
     const now = Date.now();
-    if (now - attachment.lastUpdate < 50) return; // Throttle to 20Hz max
-    
+    if (now - (attachment.lastUpdate || 0) < 50) return;
     const num = (v) => (Number.isFinite(Number(v)) ? Math.round(Number(v)) : 0);
     attachment.x = num(data.x);
     attachment.y = num(data.y);
@@ -258,11 +283,15 @@ export class TrenchRoom {
     attachment.face = data.face < 0 ? -1 : 1;
     attachment.swing = data.swing ? 1 : 0;
     if (data.level !== undefined) attachment.level = Math.max(1, Math.min(999, Math.floor(Number(data.level)) || 1));
+    if (data.xHandle || data.x_handle) attachment.xHandle = sanitizeHandle(data.xHandle || data.x_handle);
     attachment.lastUpdate = now;
-    
     ws.serializeAttachment(attachment);
-    
-    // Broadcast at 10Hz
+
+    const depth = depthFromY(attachment.y, TRENCH_FLOOR_TILE, TILE_SIZE);
+    if (depth - (attachment.lastDepthAwarded || 0) >= DEPTH_STEP_M) {
+      await this.creditEvent(ws, attachment, { kind: 'depth', depth }, now);
+    }
+
     if (now - this.lastBroadcast >= BROADCAST_INTERVAL_MS) {
       this.lastBroadcast = now;
       this.broadcastStates();
@@ -271,131 +300,138 @@ export class TrenchRoom {
 
   async handleDig(ws, data, attachment) {
     if (!attachment.playerId) return;
-    
+    const now = Date.now();
+    const scored = await this.creditEvent(ws, attachment, { kind: 'dig', x: data.x, y: data.y }, now);
+    if (!scored || !scored.ok) return;
     const bx = Math.floor(Number(data.x)), by = Math.floor(Number(data.y));
-    if (!Number.isFinite(bx) || !Number.isFinite(by)) return;
-    const key = `${bx},${by}`;
-    this.dugBlocks.set(key, Date.now());
-    
-    // Clean old dug blocks (older than 5 minutes)
-    const cutoff = Date.now() - 300000;
-    for (const [k, t] of this.dugBlocks) {
-      if (t < cutoff) this.dugBlocks.delete(k);
-    }
-    
+    this.dugBlocks.set(tileKey(bx, by), now);
+    const cutoff = now - 300000;
+    for (const [k, t] of this.dugBlocks) if (t < cutoff) this.dugBlocks.delete(k);
     this.broadcast({ type: 'dig', playerId: attachment.playerId, x: bx, y: by });
   }
 
   async handleChat(ws, data, attachment) {
     if (!attachment.playerId) return;
-    
     const now = Date.now();
-    if (now - attachment.lastChat < CHAT_RATE_LIMIT_MS) return;
-    
+    if (now - (attachment.lastChat || 0) < CHAT_RATE_LIMIT_MS) return;
     let text = String(data.text || '').slice(0, CHAT_MAX_LENGTH).trim();
     if (!text) return;
     text = filterProfanity(text);
-    
     attachment.lastChat = now;
+    attachment.lastUpdate = now;
     ws.serializeAttachment(attachment);
-    
     this.broadcast({ type: 'chat', playerId: attachment.playerId, text, name: attachment.name });
   }
 
-  async handleXpClaim(ws, data, attachment) {
+  async handleGameEvent(ws, data, attachment) {
     if (!attachment.playerId) return;
-    
-    const now = Date.now();
-    const xp = Math.min(Math.max(0, Math.floor(Number(data.xp)) || 0), 20); // Cap single claim at 20
-    if (!xp) return;
-    
-    // Rate limiting
-    if (now - attachment.lastXpClaim > XP_RATE_LIMIT_WINDOW_MS) {
-      attachment.lastXpClaim = now;
-      attachment.xpThisWindow = 0;
-    }
-    
-    if (attachment.xpThisWindow + xp > XP_MAX_PER_WINDOW) {
-      return; // Over rate limit
-    }
-    
-    attachment.xpThisWindow += xp;
-    ws.serializeAttachment(attachment);
-    
-    // Only credit the profile the Worker verified at connect time (ignore client-supplied profileId)
-    const profileId = attachment.verifiedProfileId;
-    if (profileId) {
-      const profilesId = this.env.PROFILES.idFromName(PROFILES_SHARD);
-      const profiles = this.env.PROFILES.get(profilesId);
-      const res = await profiles.fetch(new Request('http://internal/add-xp', {
-        method: 'POST',
-        body: JSON.stringify({ profileId, xp, depth: Math.max(0, Math.floor(Number(data.depth)) || 0) })
-      }));
-      const result = await res.json().catch(() => null);
-      if (result && result.success) {
-        try { ws.send(JSON.stringify({ type: 'xp', ...result })); } catch (e) {}
-      }
-    }
+    const kind = data.kind;
+    if (kind === 'dig') return this.handleDig(ws, data, attachment);
+    await this.creditEvent(ws, attachment, data, Date.now());
   }
 
-  getActivePlayers(excludeWs = null) {
+  async creditEvent(ws, attachment, event, now) {
+    const ctx = {
+      dugSet: this.dugBlocks,
+      playerX: attachment.x,
+      playerY: attachment.y,
+      lastDepthAwarded: attachment.lastDepthAwarded || 0,
+      now,
+      window: attachment.xpWindow || createXpWindow()
+    };
+    const result = scoreValidatedEvent(event, ctx);
+    attachment.xpWindow = result.window || ctx.window;
+    if (event.kind === 'depth' && result.ok) {
+      attachment.lastDepthAwarded = Math.max(attachment.lastDepthAwarded || 0, Math.floor(Number(event.depth) || 0));
+    }
+    ws.serializeAttachment(attachment);
+    if (!result.ok || !result.xp) return result;
+
+    const profileId = attachment.verifiedProfileId;
+    if (!profileId) return result;
+
+    const depth = depthFromY(attachment.y, TRENCH_FLOOR_TILE, TILE_SIZE);
+    const profiles = this.env.PROFILES.get(this.env.PROFILES.idFromName(PROFILES_SHARD));
+    const res = await profiles.fetch(new Request('http://internal/add-xp', {
+      method: 'POST',
+      body: JSON.stringify({
+        profileId,
+        xp: result.xp,
+        depth,
+        eventKind: event.kind,
+        chapterId: event.chapterId,
+        missionId: event.missionId,
+        name: attachment.name
+      })
+    }));
+    const credited = await res.json().catch(() => null);
+    if (credited && credited.success) {
+      if (credited.newLevel) attachment.level = credited.newLevel;
+      ws.serializeAttachment(attachment);
+      try { ws.send(JSON.stringify({ type: 'xp', ...credited })); } catch (e) {}
+      await this.maybeEventScore(profileId, attachment.name, result.xp);
+    }
+    return result;
+  }
+
+  async maybeEventScore(profileId, name, xp) {
+    try {
+      const events = this.env.EVENTS.get(this.env.EVENTS.idFromName(EVENTS_SHARD));
+      await events.fetch(new Request('http://internal/score', {
+        method: 'POST',
+        body: JSON.stringify({ profileId, name, xp, now: Date.now() })
+      }));
+    } catch (e) {}
+  }
+
+  getActivePlayers(excludeWs = null, now = Date.now()) {
     const players = [];
-    const webSockets = this.state.getWebSockets();
-    
-    for (const ws of webSockets) {
+    for (const ws of this.state.getWebSockets()) {
       if (ws === excludeWs) continue;
-      const attachment = ws.deserializeAttachment();
-      if (attachment && attachment.playerId) {
+      const a = ws.deserializeAttachment();
+      if (a && a.playerId) {
+        const idle = !a.lastUpdate || (now - a.lastUpdate > IDLE_MS);
         players.push({
-          id: attachment.playerId,
-          name: attachment.name,
-          pfp: attachment.pfp,
-          level: attachment.level,
-          x: attachment.x,
-          y: attachment.y,
-          vx: attachment.vx,
-          vy: attachment.vy,
-          face: attachment.face,
-          swing: attachment.swing
+          id: a.playerId,
+          name: a.name,
+          pfp: a.pfp,
+          level: a.level,
+          xHandle: a.xHandle || null,
+          status: idle ? 'idle' : 'active',
+          x: a.x, y: a.y, vx: a.vx, vy: a.vy, face: a.face, swing: a.swing
         });
       }
     }
-    
     return players;
   }
 
   broadcastStates() {
-    const players = this.getActivePlayers();
-    const message = JSON.stringify({ type: 'states', players, playerCount: players.length });
-    this.broadcast(message, null, true);
+    const now = Date.now();
+    const players = this.getActivePlayers(null, now);
+    const roster = players.map(p => ({
+      id: p.id, name: p.name, level: p.level, xHandle: p.xHandle, status: p.status
+    }));
+    this.broadcast(JSON.stringify({ type: 'states', players, playerCount: players.length, roster }), null, true);
   }
 
   broadcast(data, excludeWs = null, isString = false) {
     const message = isString ? data : JSON.stringify(data);
-    const webSockets = this.state.getWebSockets();
-    
-    for (const ws of webSockets) {
+    for (const ws of this.state.getWebSockets()) {
       if (ws !== excludeWs) {
-        try {
-          ws.send(message);
-        } catch (e) {
-          // Socket might be closed
-        }
+        try { ws.send(message); } catch (e) {}
       }
     }
   }
 }
 
 // ============================================
-// Profiles Durable Object - Player data storage
+// Profiles Durable Object
 // ============================================
 export class Profiles {
   constructor(state, env) {
     this.state = state;
     this.env = env;
     this.sql = state.storage.sql;
-    
-    // Initialize SQLite schema
     this.state.blockConcurrencyWhile(async () => {
       this.sql.exec(`
         CREATE TABLE IF NOT EXISTS profiles (
@@ -419,172 +455,551 @@ export class Profiles {
         CREATE INDEX IF NOT EXISTS idx_xp ON profiles(xp DESC);
         CREATE INDEX IF NOT EXISTS idx_depth ON profiles(best_depth DESC);
         CREATE INDEX IF NOT EXISTS idx_fid ON profiles(fid);
+        CREATE TABLE IF NOT EXISTS squads (
+          id TEXT PRIMARY KEY,
+          code TEXT UNIQUE,
+          name TEXT,
+          leader_id TEXT,
+          objective TEXT,
+          objective_progress INTEGER DEFAULT 0,
+          objective_target INTEGER DEFAULT 0,
+          xp INTEGER DEFAULT 0,
+          created_at INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS squad_members (
+          squad_id TEXT,
+          profile_id TEXT,
+          joined_at INTEGER,
+          PRIMARY KEY (squad_id, profile_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_squad_code ON squads(code);
+        CREATE INDEX IF NOT EXISTS idx_squad_xp ON squads(xp DESC);
       `);
+      for (const col of [
+        'ALTER TABLE profiles ADD COLUMN x_handle TEXT',
+        'ALTER TABLE profiles ADD COLUMN wallet TEXT',
+        "ALTER TABLE profiles ADD COLUMN titles TEXT DEFAULT '[]'",
+        "ALTER TABLE profiles ADD COLUMN campaign TEXT DEFAULT '{}'",
+        'ALTER TABLE profiles ADD COLUMN squad_id TEXT',
+        'ALTER TABLE profiles ADD COLUMN migrated_to TEXT',
+        'ALTER TABLE profiles ADD COLUMN privy_did TEXT'
+      ]) {
+        try { this.sql.exec(col); } catch (e) {}
+      }
     });
   }
 
   async fetch(request) {
     const url = new URL(request.url);
     const path = url.pathname;
-    
+
     if (path === '/check-guest' && request.method === 'POST') {
       const { id, secretHash } = await request.json();
       const rows = this.sql.exec('SELECT secret_hash FROM profiles WHERE id = ?', id).toArray();
       const ok = rows.length > 0 && !!rows[0].secret_hash && rows[0].secret_hash === secretHash;
       return Response.json({ ok });
     }
-
     if (path === '/add-xp' && request.method === 'POST') {
-      const { profileId, xp, depth } = await request.json();
-      return this.addXp(profileId, xp, depth);
+      return this.addXp(await request.json());
     }
-    
+    if (path === '/migrate' && request.method === 'POST') {
+      return this.migrate(await request.json());
+    }
     if (path === '/profile') {
-      if (request.method === 'GET') {
-        const id = url.searchParams.get('id');
-        return this.getProfile(id);
-      }
-      if (request.method === 'POST') {
-        const data = await request.json();
-        return this.saveProfile(data);
-      }
+      if (request.method === 'GET') return this.getProfile(url.searchParams.get('id'));
+      if (request.method === 'POST') return this.saveProfile(await request.json());
     }
-    
     if (path === '/leaderboard') {
-      const type = url.searchParams.get('type') || 'xp';
-      return this.getLeaderboard(type);
+      return this.getLeaderboard(url.searchParams.get('type') || 'xp');
     }
-    
+    if (path === '/squad') {
+      if (request.method === 'GET') {
+        const code = url.searchParams.get('code');
+        const id = url.searchParams.get('id');
+        const profileId = url.searchParams.get('profileId');
+        if (profileId) return this.getSquadFor(profileId);
+        return this.getSquad(code || id);
+      }
+      const body = await request.json().catch(() => ({}));
+      const action = body.action || url.searchParams.get('action');
+      if (action === 'create') return this.createSquad(body);
+      if (action === 'join') return this.joinSquad(body);
+      if (action === 'leave') return this.leaveSquad(body);
+      if (action === 'objective') return this.setSquadObjective(body);
+    }
+    if (path === '/squads/leaderboard') {
+      return this.squadLeaderboard();
+    }
     return new Response('Not found', { status: 404 });
+  }
+
+  rowToProfile(row) {
+    const { secret_hash, ...rest } = row;
+    return {
+      ...rest,
+      inventory: JSON.parse(row.inventory || '[]'),
+      equipped: JSON.parse(row.equipped || '{}'),
+      titles: JSON.parse(row.titles || '[]'),
+      campaign: normalizeProgress(JSON.parse(row.campaign || '{}'))
+    };
   }
 
   async getProfile(id) {
     const results = this.sql.exec('SELECT * FROM profiles WHERE id = ?', id).toArray();
-    if (results.length === 0) {
-      return new Response(JSON.stringify({ exists: false }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-    
-    const { secret_hash, ...row } = results[0];
-    const profile = {
-      ...row,
-      inventory: JSON.parse(row.inventory || '[]'),
-      equipped: JSON.parse(row.equipped || '{}')
-    };
-    
-    return new Response(JSON.stringify({ exists: true, profile }), {
-      headers: { 'Content-Type': 'application/json' }
-    });
+    if (!results.length) return Response.json({ exists: false });
+    const profile = this.rowToProfile(results[0]);
+    return Response.json({ exists: true, profile, campaign: campaignPublic(profile.campaign) });
   }
 
   async saveProfile(data) {
     const now = Date.now();
-    const existing = this.sql.exec('SELECT id, secret_hash FROM profiles WHERE id = ?', data.id).toArray();
-    
-    // Guest profiles are owned by whoever first saved them with a secret
+    if (!validProfileId(data.id)) return Response.json({ success: false, error: 'Invalid id' }, { status: 400 });
+    const existing = this.sql.exec('SELECT * FROM profiles WHERE id = ?', data.id).toArray();
+
     if (data.id.startsWith('guest:')) {
-      if (!data.secretHash) {
-        return Response.json({ success: false, error: 'Guest secret required' }, { status: 401 });
-      }
-      if (existing.length > 0 && existing[0].secret_hash && existing[0].secret_hash !== data.secretHash) {
+      if (!data.secretHash) return Response.json({ success: false, error: 'Guest secret required' }, { status: 401 });
+      if (existing.length && existing[0].secret_hash && existing[0].secret_hash !== data.secretHash) {
         return Response.json({ success: false, error: 'Not your profile' }, { status: 403 });
       }
     }
-    
-    if (existing.length > 0) {
+
+    const name = filterProfanity(String(data.name || 'Trencher').slice(0, 20));
+    const pfp = typeof data.pfp === 'string' && /^https:\/\//.test(data.pfp) ? data.pfp.slice(0, 512) : (existing[0] && existing[0].pfp) || null;
+    const xHandle = sanitizeHandle(data.x_handle || data.xHandle) || (existing[0] && existing[0].x_handle) || null;
+    const wallet = sanitizeWallet(data.wallet) || (existing[0] && existing[0].wallet) || null;
+    const equipped = JSON.stringify(data.equipped || (existing[0] ? JSON.parse(existing[0].equipped || '{}') : {}));
+
+    if (existing.length) {
+      // Server owns xp / level / depth / inventory / campaign. Client may update identity + equipped.
       this.sql.exec(`
         UPDATE profiles SET
-          name = ?, pfp = ?, level = ?, xp = ?, best_depth = ?,
-          total_diamonds = ?, total_digs = ?, deaths = ?, play_time = ?,
-          inventory = ?, equipped = ?, secret_hash = COALESCE(secret_hash, ?), updated_at = ?
+          name = ?, pfp = ?, equipped = ?,
+          x_handle = ?, wallet = ?,
+          secret_hash = COALESCE(secret_hash, ?),
+          updated_at = ?
         WHERE id = ?
-      `,
-        data.name, data.pfp, data.level, data.xp, data.best_depth,
-        data.total_diamonds || 0, data.total_digs || 0, data.deaths || 0, data.play_time || 0,
-        JSON.stringify(data.inventory || []), JSON.stringify(data.equipped || {}),
-        data.secretHash || null, now, data.id
-      );
+      `, name, pfp, equipped, xHandle, wallet, data.secretHash || null, now, data.id);
     } else {
       this.sql.exec(`
-        INSERT INTO profiles (id, fid, name, pfp, level, xp, best_depth, total_diamonds, total_digs, deaths, play_time, inventory, equipped, secret_hash, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO profiles (id, fid, name, pfp, level, xp, best_depth, total_diamonds, total_digs, deaths, play_time,
+          inventory, equipped, secret_hash, created_at, updated_at, x_handle, wallet, titles, campaign, privy_did)
+        VALUES (?, ?, ?, ?, 1, 0, 0, 0, 0, 0, 0, '[]', ?, ?, ?, ?, ?, ?, '[]', '{}', ?)
       `,
-        data.id, data.fid || null, data.name, data.pfp,
-        data.level || 1, data.xp || 0, data.best_depth || 0,
-        data.total_diamonds || 0, data.total_digs || 0, data.deaths || 0, data.play_time || 0,
-        JSON.stringify(data.inventory || []), JSON.stringify(data.equipped || {}),
-        data.secretHash || null, now, now
+        data.id, data.fid || null, name, pfp,
+        equipped, data.secretHash || null, now, now,
+        xHandle, wallet, data.id.startsWith('did:privy:') ? data.id : null
       );
     }
-    
-    return new Response(JSON.stringify({ success: true }), {
-      headers: { 'Content-Type': 'application/json' }
+    const fresh = this.sql.exec('SELECT * FROM profiles WHERE id = ?', data.id).toArray();
+    return Response.json({ success: true, profile: this.rowToProfile(fresh[0]) });
+  }
+
+  async addXp({ profileId, xp, depth, eventKind, chapterId, missionId, name }) {
+    const results = this.sql.exec('SELECT * FROM profiles WHERE id = ?', profileId).toArray();
+    if (!results.length) return Response.json({ success: false });
+    const row = results[0];
+    const add = Math.max(0, Math.floor(Number(xp) || 0));
+    const newXp = (row.xp || 0) + add;
+    const newLevel = levelFromXp(newXp);
+    const newBestDepth = Math.max(row.best_depth || 0, Math.floor(Number(depth) || 0));
+    let campaign = normalizeProgress(JSON.parse(row.campaign || '{}'));
+    let titles = JSON.parse(row.titles || '[]');
+    let inventory = JSON.parse(row.inventory || '[]');
+    const rewards = [];
+
+    if (eventKind === 'depth' || eventKind === 'dig') campaign = noteStat(campaign, 'depth', newBestDepth);
+    else if (eventKind === 'survive' || eventKind === 'dodge' || eventKind === 'relic' || eventKind === 'squad' || eventKind === 'boss') {
+      campaign = noteStat(campaign, eventKind, 1);
+    }
+    if (eventKind === 'dig') {
+      this.sql.exec('UPDATE profiles SET total_digs = total_digs + 1 WHERE id = ?', profileId);
+    }
+
+    if (eventKind === 'mission' || eventKind === 'boss') {
+      const done = completeMission(campaign, chapterId, missionId || (eventKind === 'boss' ? undefined : missionId));
+      if (done.ok) {
+        campaign = done.progress;
+        titles = campaign.titles;
+        for (const r of done.rewards) {
+          if (r.gear) {
+            const gear = { id: crypto.randomUUID(), ...r.gear, foundAt: Date.now(), foundDepth: newBestDepth };
+            inventory.push(gear);
+            rewards.push({ title: r.title, gear });
+          } else if (r.title) rewards.push({ title: r.title });
+        }
+      }
+    }
+
+    let gearDrop = null;
+    if (Math.random() < 0.02 && depth > 10 && add > 0) {
+      gearDrop = generateGearDrop(depth);
+      inventory.push(gearDrop);
+    }
+
+    this.sql.exec(`
+      UPDATE profiles SET xp = ?, level = ?, best_depth = ?, inventory = ?, titles = ?, campaign = ?,
+        name = COALESCE(?, name), updated_at = ? WHERE id = ?
+    `, newXp, newLevel, newBestDepth, JSON.stringify(inventory), JSON.stringify(titles),
+      JSON.stringify(campaign), name || null, Date.now(), profileId);
+
+    if (row.squad_id && add > 0) {
+      this.sql.exec('UPDATE squads SET xp = xp + ? WHERE id = ?', add, row.squad_id);
+      const sq = this.sql.exec('SELECT * FROM squads WHERE id = ?', row.squad_id).toArray()[0];
+      if (sq && sq.objective_target > 0 && (eventKind === 'dig' || eventKind === 'depth')) {
+        const next = Math.min(sq.objective_target, (sq.objective_progress || 0) + (eventKind === 'depth' ? 5 : 1));
+        this.sql.exec('UPDATE squads SET objective_progress = ? WHERE id = ?', next, row.squad_id);
+        if (next >= sq.objective_target && (sq.objective_progress || 0) < sq.objective_target) {
+          campaign = noteStat(campaign, 'squad', 1);
+          this.sql.exec('UPDATE profiles SET campaign = ? WHERE id = ?', JSON.stringify(campaign), profileId);
+        }
+      }
+    }
+
+    return Response.json({
+      success: true,
+      newXp,
+      newLevel,
+      leveledUp: newLevel > row.level,
+      gearDrop,
+      rewards,
+      campaign: campaignPublic(campaign),
+      titles
     });
   }
 
-  async addXp(profileId, xp, depth) {
-    const results = this.sql.exec('SELECT xp, best_depth, level FROM profiles WHERE id = ?', profileId).toArray();
-    if (results.length === 0) {
-      return new Response(JSON.stringify({ success: false }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
+  async migrate({ toId, fromId, secretHash }) {
+    if (!PRIVY_ID_RE.test(toId) || !validProfileId(fromId) || toId === fromId) {
+      return Response.json({ success: false, error: 'bad ids' }, { status: 400 });
     }
-    
-    const row = results[0];
-    const newXp = (row.xp || 0) + xp;
-    const newLevel = levelFromXp(newXp);
-    const newBestDepth = Math.max(row.best_depth || 0, depth || 0);
-    
-    this.sql.exec(`
-      UPDATE profiles SET xp = ?, level = ?, best_depth = ?, updated_at = ? WHERE id = ?
-    `, newXp, newLevel, newBestDepth, Date.now(), profileId);
-    
-    // Check for gear drop
-    let gearDrop = null;
-    if (Math.random() < 0.02 && depth > 10) { // 2% chance per XP claim if deep enough
-      gearDrop = generateGearDrop(depth);
-      const currentArr = this.sql.exec('SELECT inventory FROM profiles WHERE id = ?', profileId).toArray();
-      if (currentArr.length > 0) {
-        const inventory = JSON.parse(currentArr[0].inventory || '[]');
-        inventory.push(gearDrop);
-        this.sql.exec('UPDATE profiles SET inventory = ? WHERE id = ?', JSON.stringify(inventory), profileId);
-      }
+    const dest = this.sql.exec('SELECT * FROM profiles WHERE id = ?', toId).toArray();
+    const src = this.sql.exec('SELECT * FROM profiles WHERE id = ?', fromId).toArray();
+    if (!src.length) return Response.json({ success: false, error: 'source missing' }, { status: 404 });
+    if (src[0].migrated_to) return Response.json({ success: false, error: 'already migrated' }, { status: 409 });
+    if (fromId.startsWith('guest:') && src[0].secret_hash && src[0].secret_hash !== secretHash) {
+      return Response.json({ success: false, error: 'Not your profile' }, { status: 403 });
     }
-    
-    return new Response(JSON.stringify({ 
-      success: true, 
-      newXp, 
-      newLevel, 
-      leveledUp: newLevel > row.level,
-      gearDrop 
-    }), {
-      headers: { 'Content-Type': 'application/json' }
-    });
+    const now = Date.now();
+    const s = src[0];
+    if (!dest.length) {
+      this.sql.exec(`
+        INSERT INTO profiles (id, fid, name, pfp, level, xp, best_depth, total_diamonds, total_digs, deaths, play_time,
+          inventory, equipped, created_at, updated_at, x_handle, wallet, titles, campaign, privy_did, squad_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, toId, s.fid, s.name, s.pfp, s.level, s.xp, s.best_depth, s.total_diamonds, s.total_digs, s.deaths, s.play_time,
+        s.inventory, s.equipped, s.created_at || now, now, s.x_handle, s.wallet, s.titles || '[]', s.campaign || '{}', toId, s.squad_id);
+    } else if ((dest[0].xp || 0) === 0 && (s.xp || 0) > 0) {
+      this.sql.exec(`
+        UPDATE profiles SET fid = COALESCE(fid, ?), name = ?, pfp = COALESCE(?, pfp), level = ?, xp = ?, best_depth = MAX(best_depth, ?),
+          total_diamonds = total_diamonds + ?, total_digs = total_digs + ?, deaths = deaths + ?, play_time = play_time + ?,
+          inventory = ?, equipped = ?, x_handle = COALESCE(x_handle, ?), wallet = COALESCE(wallet, ?),
+          titles = ?, campaign = ?, squad_id = COALESCE(squad_id, ?), updated_at = ?
+        WHERE id = ?
+      `, s.fid, s.name, s.pfp, s.level, s.xp, s.best_depth, s.total_diamonds || 0, s.total_digs || 0, s.deaths || 0, s.play_time || 0,
+        s.inventory, s.equipped, s.x_handle, s.wallet, s.titles || '[]', s.campaign || '{}', s.squad_id, now, toId);
+    } else {
+      return Response.json({ success: false, error: 'already migrated' }, { status: 409 });
+    }
+    this.sql.exec('UPDATE profiles SET migrated_to = ?, updated_at = ? WHERE id = ?', toId, now, fromId);
+    if (s.squad_id) {
+      this.sql.exec('UPDATE squad_members SET profile_id = ? WHERE profile_id = ?', toId, fromId);
+      this.sql.exec('UPDATE squads SET leader_id = ? WHERE leader_id = ?', toId, fromId);
+    }
+    const fresh = this.sql.exec('SELECT * FROM profiles WHERE id = ?', toId).toArray();
+    return Response.json({ success: true, profile: this.rowToProfile(fresh[0]) });
   }
 
   async getLeaderboard(type) {
+    if (type === 'squad') return this.squadLeaderboard();
     const orderBy = type === 'depth' ? 'best_depth' : 'xp';
     const rows = this.sql.exec(`
-      SELECT id, name, pfp, level, xp, best_depth FROM profiles
+      SELECT id, name, pfp, level, xp, best_depth, x_handle, wallet FROM profiles
+      WHERE migrated_to IS NULL
       ORDER BY ${orderBy} DESC LIMIT 50
     `).toArray();
-    
-    return new Response(JSON.stringify({ leaderboard: rows }), {
+    return Response.json({ leaderboard: rows });
+  }
+
+  async createSquad({ profileId, name, objective, target }) {
+    if (!profileId) return Response.json({ success: false, error: 'auth' }, { status: 401 });
+    const me = this.sql.exec('SELECT squad_id FROM profiles WHERE id = ?', profileId).toArray();
+    if (me.length && me[0].squad_id) return Response.json({ success: false, error: 'already in a squad' }, { status: 409 });
+    const id = crypto.randomUUID();
+    let code = squadCode();
+    for (let i = 0; i < 8 && this.sql.exec('SELECT 1 AS x FROM squads WHERE code = ?', code).toArray().length; i++) code = squadCode();
+    const now = Date.now();
+    const obj = filterProfanity(String(objective || 'Dig as a squad').slice(0, 80));
+    const tgt = Math.max(9, Math.min(2000, Math.floor(Number(target) || 90)));
+    this.sql.exec(
+      'INSERT INTO squads (id, code, name, leader_id, objective, objective_progress, objective_target, xp, created_at) VALUES (?,?,?,?,?,0,?,0,?)',
+      id, code, filterProfanity(String(name || 'Squad').slice(0, 24)), profileId, obj, tgt, now
+    );
+    this.sql.exec('INSERT INTO squad_members (squad_id, profile_id, joined_at) VALUES (?,?,?)', id, profileId, now);
+    this.sql.exec('UPDATE profiles SET squad_id = ? WHERE id = ?', id, profileId);
+    return this.getSquad(code);
+  }
+
+  async joinSquad({ profileId, code }) {
+    const c = String(code || '').trim().toUpperCase();
+    const sq = this.sql.exec('SELECT * FROM squads WHERE code = ?', c).toArray()[0];
+    if (!sq) return Response.json({ success: false, error: 'unknown code' }, { status: 404 });
+    const n = this.sql.exec('SELECT COUNT(*) AS n FROM squad_members WHERE squad_id = ?', sq.id).toArray()[0].n;
+    if (n >= SQUAD_MAX) return Response.json({ success: false, error: 'squad full' }, { status: 409 });
+    const me = this.sql.exec('SELECT squad_id FROM profiles WHERE id = ?', profileId).toArray()[0];
+    if (me && me.squad_id && me.squad_id !== sq.id) return Response.json({ success: false, error: 'already in a squad' }, { status: 409 });
+    this.sql.exec('INSERT OR IGNORE INTO squad_members (squad_id, profile_id, joined_at) VALUES (?,?,?)', sq.id, profileId, Date.now());
+    this.sql.exec('UPDATE profiles SET squad_id = ? WHERE id = ?', sq.id, profileId);
+    return this.getSquad(c);
+  }
+
+  async leaveSquad({ profileId }) {
+    const me = this.sql.exec('SELECT squad_id FROM profiles WHERE id = ?', profileId).toArray()[0];
+    if (!me || !me.squad_id) return Response.json({ success: true });
+    this.sql.exec('DELETE FROM squad_members WHERE squad_id = ? AND profile_id = ?', me.squad_id, profileId);
+    this.sql.exec('UPDATE profiles SET squad_id = NULL WHERE id = ?', profileId);
+    const left = this.sql.exec('SELECT profile_id FROM squad_members WHERE squad_id = ?', me.squad_id).toArray();
+    if (!left.length) this.sql.exec('DELETE FROM squads WHERE id = ?', me.squad_id);
+    else {
+      const sq = this.sql.exec('SELECT leader_id FROM squads WHERE id = ?', me.squad_id).toArray()[0];
+      if (sq && sq.leader_id === profileId) {
+        this.sql.exec('UPDATE squads SET leader_id = ? WHERE id = ?', left[0].profile_id, me.squad_id);
+      }
+    }
+    return Response.json({ success: true });
+  }
+
+  async setSquadObjective({ profileId, objective, target }) {
+    const me = this.sql.exec('SELECT squad_id FROM profiles WHERE id = ?', profileId).toArray()[0];
+    if (!me || !me.squad_id) return Response.json({ success: false, error: 'no squad' }, { status: 404 });
+    const sq = this.sql.exec('SELECT * FROM squads WHERE id = ?', me.squad_id).toArray()[0];
+    if (!sq || sq.leader_id !== profileId) return Response.json({ success: false, error: 'leader only' }, { status: 403 });
+    const obj = filterProfanity(String(objective || sq.objective).slice(0, 80));
+    const tgt = Math.max(9, Math.min(2000, Math.floor(Number(target) || sq.objective_target || 90)));
+    this.sql.exec('UPDATE squads SET objective = ?, objective_target = ?, objective_progress = 0 WHERE id = ?', obj, tgt, sq.id);
+    return this.getSquad(sq.code);
+  }
+
+  squadPayload(sq) {
+    const members = this.sql.exec(`
+      SELECT p.id, p.name, p.level, p.xp, p.x_handle, p.pfp
+      FROM squad_members m JOIN profiles p ON p.id = m.profile_id
+      WHERE m.squad_id = ? ORDER BY m.joined_at
+    `, sq.id).toArray();
+    return {
+      success: true,
+      squad: {
+        id: sq.id,
+        code: sq.code,
+        name: sq.name,
+        leader_id: sq.leader_id,
+        objective: sq.objective,
+        objective_progress: sq.objective_progress,
+        objective_target: sq.objective_target,
+        xp: sq.xp,
+        members
+      }
+    };
+  }
+
+  async getSquad(codeOrId) {
+    const sq = this.sql.exec('SELECT * FROM squads WHERE code = ? OR id = ?', String(codeOrId || '').toUpperCase(), codeOrId).toArray()[0];
+    if (!sq) return Response.json({ success: false, error: 'not found' }, { status: 404 });
+    return Response.json(this.squadPayload(sq));
+  }
+
+  async getSquadFor(profileId) {
+    const me = this.sql.exec('SELECT squad_id FROM profiles WHERE id = ?', profileId).toArray()[0];
+    if (!me || !me.squad_id) return Response.json({ success: true, squad: null });
+    const sq = this.sql.exec('SELECT * FROM squads WHERE id = ?', me.squad_id).toArray()[0];
+    if (!sq) return Response.json({ success: true, squad: null });
+    return Response.json(this.squadPayload(sq));
+  }
+
+  async squadLeaderboard() {
+    const rows = this.sql.exec(`
+      SELECT s.code, s.name, s.xp, s.objective, s.objective_progress, s.objective_target,
+        (SELECT COUNT(*) FROM squad_members m WHERE m.squad_id = s.id) AS members
+      FROM squads s ORDER BY s.xp DESC LIMIT 50
+    `).toArray();
+    return Response.json({ leaderboard: rows });
+  }
+}
+
+// ============================================
+// Events Durable Object
+// ============================================
+export class Events {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+    this.sql = state.storage.sql;
+    this.state.blockConcurrencyWhile(async () => {
+      this.sql.exec(`
+        CREATE TABLE IF NOT EXISTS events (
+          id TEXT PRIMARY KEY,
+          title TEXT,
+          start_at INTEGER,
+          end_at INTEGER,
+          type TEXT,
+          description TEXT,
+          created_at INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS event_scores (
+          event_id TEXT,
+          profile_id TEXT,
+          name TEXT,
+          score INTEGER DEFAULT 0,
+          PRIMARY KEY (event_id, profile_id)
+        );
+      `);
+    });
+  }
+
+  store() {
+    const self = this;
+    return {
+      list() { return self.sql.exec('SELECT * FROM events ORDER BY start_at').toArray(); },
+      get(id) { return self.sql.exec('SELECT * FROM events WHERE id = ?', id).toArray()[0] || null; },
+      put(ev) {
+        self.sql.exec(
+          'INSERT OR REPLACE INTO events (id, title, start_at, end_at, type, description, created_at) VALUES (?,?,?,?,?,?,?)',
+          ev.id, ev.title, ev.start_at, ev.end_at, ev.type, ev.description, ev.created_at
+        );
+        return ev;
+      },
+      delete(id) {
+        const n = self.sql.exec('SELECT 1 AS x FROM events WHERE id = ?', id).toArray().length;
+        self.sql.exec('DELETE FROM events WHERE id = ?', id);
+        self.sql.exec('DELETE FROM event_scores WHERE event_id = ?', id);
+        return n > 0;
+      },
+      addScore(eventId, profileId, name, delta) {
+        if (!this.get(eventId)) return null;
+        const cur = self.sql.exec('SELECT score FROM event_scores WHERE event_id = ? AND profile_id = ?', eventId, profileId).toArray()[0];
+        if (cur) {
+          self.sql.exec('UPDATE event_scores SET score = score + ?, name = COALESCE(?, name) WHERE event_id = ? AND profile_id = ?',
+            delta, name || null, eventId, profileId);
+        } else {
+          self.sql.exec('INSERT INTO event_scores (event_id, profile_id, name, score) VALUES (?,?,?,?)',
+            eventId, profileId, name || 'Trencher', delta);
+        }
+        return true;
+      },
+      leaderboard(eventId, limit = 20) {
+        return self.sql.exec(
+          'SELECT profile_id, name, score FROM event_scores WHERE event_id = ? ORDER BY score DESC LIMIT ?',
+          eventId, limit
+        ).toArray();
+      }
+    };
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === '/score' && request.method === 'POST') {
+      const { profileId, name, xp, now } = await request.json();
+      const t = now || Date.now();
+      const live = this.sql.exec('SELECT id FROM events WHERE start_at <= ? AND end_at >= ?', t, t).toArray();
+      const store = this.store();
+      for (const e of live) store.addScore(e.id, profileId, name, Math.max(0, Math.floor(Number(xp) || 0)));
+      return Response.json({ ok: true, live: live.length });
+    }
+    const path = url.pathname.replace(/^\/http/, '') || '/';
+    let body = null;
+    if (request.method === 'POST' || request.method === 'DELETE') {
+      const text = await request.text();
+      try { body = text ? JSON.parse(text) : {}; } catch { body = {}; }
+    }
+    const result = handleEventsApi(this.store(), {
+      method: request.method,
+      path,
+      body,
+      adminKey: this.env.EVENTS_ADMIN_KEY,
+      authHeader: request.headers.get('Authorization'),
+      now: Date.now()
+    });
+    if (result.ics) {
+      return new Response(result.ics, {
+        status: result.status,
+        headers: { 'Content-Type': result.contentType || 'text/calendar; charset=utf-8' }
+      });
+    }
+    return new Response(JSON.stringify(result.body || { error: 'not found' }), {
+      status: result.status,
       headers: { 'Content-Type': 'application/json' }
     });
   }
 }
 
 // ============================================
-// Main Worker - HTTP routing
+// Auth helpers
+// ============================================
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function privyAppId(env) {
+  return env.PRIVY_APP_ID || '';
+}
+
+async function verifyIncomingToken(token, env) {
+  if (!token) return null;
+  const appId = privyAppId(env);
+  if (appId) {
+    const privy = await verifyPrivyJwt(token, appId);
+    if (privy) return { kind: 'privy', id: privy.did, did: privy.did };
+  }
+  const fid = await verifyFcJwt(token);
+  if (fid) return { kind: 'fid', id: `fid:${fid}`, fid };
+  return null;
+}
+
+async function authFromRequest(request, env) {
+  const header = request.headers.get('Authorization');
+  if (header && header.startsWith('Bearer ')) {
+    const verified = await verifyIncomingToken(header.slice(7), env);
+    if (verified) return verified;
+  }
+  return null;
+}
+
+async function requireProfileWrite(request, env, dataId) {
+  const verified = await authFromRequest(request, env);
+  if (dataId && dataId.startsWith('did:privy:')) {
+    if (!verified || verified.kind !== 'privy' || verified.id !== dataId) {
+      return { error: 'Auth required', status: 401 };
+    }
+    return { auth: verified, secretHash: null };
+  }
+  if (dataId && dataId.startsWith('fid:')) {
+    if (!verified || verified.kind !== 'fid' || verified.id !== dataId) {
+      return { error: 'Auth required', status: 401 };
+    }
+    return { auth: verified, secretHash: null, fid: verified.fid };
+  }
+  if (dataId && GUEST_ID_RE.test(dataId)) {
+    const secret = request.headers.get('X-Guest-Secret');
+    if (!secret || secret.length < 16) return { error: 'Guest secret required', status: 401 };
+    return { auth: { kind: 'guest', id: dataId }, secretHash: await sha256Hex(secret) };
+  }
+  return { error: 'Invalid profile id', status: 400 };
+}
+
+function profilesStub(env) {
+  return env.PROFILES.get(env.PROFILES.idFromName(PROFILES_SHARD));
+}
+function eventsStub(env) {
+  return env.EVENTS.get(env.EVENTS.idFromName(EVENTS_SHARD));
+}
+
+// ============================================
+// Main Worker
 // ============================================
 export default {
   async fetch(request, env, ctx) {
     try {
       return await handleRequest(request, env, ctx);
     } catch (e) {
-      // Always return CORS headers so browsers surface the real error instead of a CORS failure
       console.error('Unhandled error:', e && e.stack || e);
       return new Response(JSON.stringify({ error: 'Internal error' }), {
         status: 500,
@@ -595,191 +1010,186 @@ export default {
 };
 
 async function handleRequest(request, env, ctx) {
-  {
-    const url = new URL(request.url);
-    const origin = request.headers.get('Origin') || '';
-    
-    // CORS preflight
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders(origin) });
+  const url = new URL(request.url);
+  const origin = request.headers.get('Origin') || '';
+  const path = url.pathname.replace(/\/+$/, '') || '/';
+
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders(origin) });
+  }
+
+  if (path === '/api/health') {
+    return json({ status: 'ok', time: Date.now() }, 200, origin);
+  }
+
+  if (path === '/api/campaign') {
+    return json({ chapters: CHAPTERS }, 200, origin);
+  }
+
+  if (path === '/presence' || path === '/api/presence') {
+    const room = env.TRENCH_ROOM.get(env.TRENCH_ROOM.idFromName('main'));
+    const res = await room.fetch(new Request('http://internal/presence'));
+    const body = await res.json();
+    return json(body, 200, origin);
+  }
+
+  if (path === '/api/ws') {
+    if (request.headers.get('Upgrade') !== 'websocket') {
+      return new Response('Expected WebSocket', { status: 426, headers: corsHeaders(origin) });
     }
-    
-    // Health check
-    if (url.pathname === '/api/health') {
-      return new Response(JSON.stringify({ status: 'ok', time: Date.now() }), {
-        headers: { 'Content-Type': 'application/json', ...corsHeaders(origin) }
-      });
+    const roomName = (url.searchParams.get('room') || 'main').replace(/[^a-z0-9_-]/gi, '').slice(0, 32) || 'main';
+    const room = env.TRENCH_ROOM.get(env.TRENCH_ROOM.idFromName(roomName));
+    let verifiedProfileId = null;
+    const token = url.searchParams.get('token');
+    const guestId = url.searchParams.get('profileId');
+    const guestSecret = url.searchParams.get('secret');
+    if (token) {
+      const v = await verifyIncomingToken(token, env);
+      if (v) verifiedProfileId = v.id;
+    } else if (guestId && guestSecret && GUEST_ID_RE.test(guestId)) {
+      const res = await profilesStub(env).fetch(new Request('http://internal/check-guest', {
+        method: 'POST',
+        body: JSON.stringify({ id: guestId, secretHash: await sha256Hex(guestSecret) })
+      }));
+      if ((await res.json()).ok) verifiedProfileId = guestId;
     }
-    
-    // WebSocket connection to TrenchRoom
-    if (url.pathname === '/api/ws') {
-      if (request.headers.get('Upgrade') !== 'websocket') {
-        return new Response('Expected WebSocket', { status: 426, headers: corsHeaders(origin) });
-      }
-      const roomName = (url.searchParams.get('room') || 'main').replace(/[^a-z0-9_-]/gi, '').slice(0, 32) || 'main';
-      const roomId = env.TRENCH_ROOM.idFromName(roomName);
-      const room = env.TRENCH_ROOM.get(roomId);
-      
-      // Verify which profile this socket may credit XP to (browsers can't set WS headers, so use query params)
-      let verifiedProfileId = null;
-      const token = url.searchParams.get('token');
-      const guestId = url.searchParams.get('profileId');
-      const guestSecret = url.searchParams.get('secret');
-      if (token) {
-        const fid = await verifyFarcasterToken(token);
-        if (fid) verifiedProfileId = `fid:${fid}`;
-      } else if (guestId && guestSecret && GUEST_ID_RE.test(guestId)) {
-        const profiles = env.PROFILES.get(env.PROFILES.idFromName(PROFILES_SHARD));
-        const res = await profiles.fetch(new Request('http://internal/check-guest', {
-          method: 'POST',
-          body: JSON.stringify({ id: guestId, secretHash: await sha256Hex(guestSecret) })
-        }));
-        if ((await res.json()).ok) verifiedProfileId = guestId;
-      }
-      const headers = new Headers(request.headers);
-      headers.delete('X-BT-Profile');
-      if (verifiedProfileId) headers.set('X-BT-Profile', verifiedProfileId);
-      return room.fetch(new Request(request, { headers }));
+    const headers = new Headers(request.headers);
+    headers.delete('X-BT-Profile');
+    if (verifiedProfileId) headers.set('X-BT-Profile', verifiedProfileId);
+    return room.fetch(new Request(request, { headers }));
+  }
+
+  if (path === '/api/profile/migrate' && request.method === 'POST') {
+    let data;
+    try { data = await request.json(); } catch { return json({ error: 'Invalid JSON' }, 400, origin); }
+    const privy = await authFromRequest(request, env);
+    if (!privy || privy.kind !== 'privy') return json({ error: 'Privy auth required' }, 401, origin);
+    const fromId = data.from || data.fromId;
+    if (!fromId) return json({ error: 'from required' }, 400, origin);
+    let secretHash = null;
+    if (GUEST_ID_RE.test(fromId)) {
+      const secret = data.guestSecret || request.headers.get('X-Guest-Secret');
+      if (!secret) return json({ error: 'Guest secret required' }, 401, origin);
+      secretHash = await sha256Hex(secret);
+    } else if (fromId.startsWith('fid:')) {
+      const fc = data.farcasterToken || data.fcToken;
+      const fid = fc ? await verifyFcJwt(fc) : (privy.fid || null);
+      // Accept if they also sent a FC token proving the fid, or if fromId matches a verified FC on this request.
+      const headerFc = request.headers.get('X-Farcaster-Token');
+      const proved = (fc && fid && fromId === `fid:${fid}`) || (headerFc && fromId === `fid:${await verifyFcJwt(headerFc)}`);
+      if (!proved) return json({ error: 'Farcaster proof required' }, 403, origin);
+    } else {
+      return json({ error: 'Can only migrate guest or Farcaster profiles' }, 400, origin);
     }
-    
-    // Profile endpoints
-    if (url.pathname === '/api/profile') {
-      const profilesId = env.PROFILES.idFromName(PROFILES_SHARD);
-      const profiles = env.PROFILES.get(profilesId);
-      
-      // Verify Farcaster auth if provided
-      const authHeader = request.headers.get('Authorization');
-      let verifiedFid = null;
-      
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        const token = authHeader.slice(7);
-        verifiedFid = await verifyFarcasterToken(token);
-      }
-      
-      if (request.method === 'POST') {
-        const json = (obj, status = 200) => new Response(JSON.stringify(obj), {
-          status, headers: { 'Content-Type': 'application/json', ...corsHeaders(origin) }
-        });
-        let data;
-        try { data = await request.json(); } catch (e) { return json({ error: 'Invalid JSON' }, 400); }
-        if (!data || typeof data.id !== 'string') return json({ error: 'Missing id' }, 400);
-        
-        if (data.id.startsWith('fid:')) {
-          // Farcaster profiles require a valid Quick Auth token for the same FID
-          if (!verifiedFid) return json({ error: 'Auth required' }, 401);
-          if (data.id !== `fid:${verifiedFid}`) return json({ error: 'FID mismatch' }, 403);
-          data.fid = Number(verifiedFid);
-          delete data.secretHash;
-        } else if (GUEST_ID_RE.test(data.id)) {
-          const secret = request.headers.get('X-Guest-Secret');
-          if (!secret || secret.length < 16) return json({ error: 'Guest secret required' }, 401);
-          data.fid = null;
-          data.secretHash = await sha256Hex(secret);
-        } else {
-          return json({ error: 'Invalid profile id' }, 400);
+    const res = await profilesStub(env).fetch(new Request('http://internal/migrate', {
+      method: 'POST',
+      body: JSON.stringify({ toId: privy.id, fromId, secretHash })
+    }));
+    return json(await res.json(), res.status, origin);
+  }
+
+  if (path === '/api/profile') {
+    const profiles = profilesStub(env);
+    if (request.method === 'POST') {
+      let data;
+      try { data = await request.json(); } catch { return json({ error: 'Invalid JSON' }, 400, origin); }
+      if (!data || typeof data.id !== 'string') return json({ error: 'Missing id' }, 400, origin);
+      const gate = await requireProfileWrite(request, env, data.id);
+      if (gate.error) return json({ error: gate.error }, gate.status, origin);
+      if (gate.fid) data.fid = gate.fid;
+      if (gate.secretHash) data.secretHash = gate.secretHash;
+      else delete data.secretHash;
+      data.x_handle = sanitizeHandle(data.x_handle || data.xHandle);
+      data.wallet = sanitizeWallet(data.wallet);
+      data.name = filterProfanity(String(data.name || 'Trencher').slice(0, 20));
+      data.pfp = typeof data.pfp === 'string' && /^https:\/\//.test(data.pfp) ? data.pfp.slice(0, 512) : null;
+      const response = await profiles.fetch(new Request('http://internal/profile', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      }));
+      return json(await response.json(), response.status, origin);
+    }
+    const id = url.searchParams.get('id') || '';
+    const response = await profiles.fetch(new Request(`http://internal/profile?id=${encodeURIComponent(id)}`));
+    return json(await response.json(), 200, origin);
+  }
+
+  if (path === '/api/leaderboard') {
+    const type = url.searchParams.get('type') === 'depth' ? 'depth' : (url.searchParams.get('type') === 'squad' ? 'squad' : 'xp');
+    const response = await profilesStub(env).fetch(new Request(`http://internal/leaderboard?type=${type}`));
+    return json(await response.json(), 200, origin);
+  }
+
+  if (path === '/api/squads/leaderboard') {
+    const response = await profilesStub(env).fetch(new Request('http://internal/squads/leaderboard'));
+    return json(await response.json(), 200, origin);
+  }
+
+  if (path === '/api/squads' || path === '/api/squads/join' || path === '/api/squads/leave' || path === '/api/squads/me' || path === '/api/squads/objective') {
+    const profiles = profilesStub(env);
+    if (request.method === 'GET') {
+      const code = url.searchParams.get('code');
+      if (path === '/api/squads/me' || url.searchParams.get('me')) {
+        const v = await authFromRequest(request, env);
+        const guestId = url.searchParams.get('profileId');
+        const guestSecret = request.headers.get('X-Guest-Secret');
+        let profileId = v && v.id;
+        if (!profileId && guestId && guestSecret && GUEST_ID_RE.test(guestId)) {
+          const chk = await profiles.fetch(new Request('http://internal/check-guest', {
+            method: 'POST', body: JSON.stringify({ id: guestId, secretHash: await sha256Hex(guestSecret) })
+          }));
+          if ((await chk.json()).ok) profileId = guestId;
         }
-        data.name = filterProfanity(String(data.name || 'Trencher').slice(0, 20));
-        data.pfp = typeof data.pfp === 'string' && /^https:\/\//.test(data.pfp) ? data.pfp.slice(0, 512) : null;
-        
-        const response = await profiles.fetch(new Request('http://internal/profile', {
-          method: 'POST',
-          body: JSON.stringify(data)
-        }));
-        return json(await response.json(), response.status);
+        if (!profileId) return json({ success: true, squad: null }, 200, origin);
+        const response = await profiles.fetch(new Request(`http://internal/squad?profileId=${encodeURIComponent(profileId)}`));
+        return json(await response.json(), 200, origin);
       }
+      const response = await profiles.fetch(new Request(`http://internal/squad?code=${encodeURIComponent(code || '')}`));
+      return json(await response.json(), response.status, origin);
+    }
+    let data;
+    try { data = await request.json(); } catch { data = {}; }
+    const v = await authFromRequest(request, env);
+    let profileId = v && v.id;
+    if (!profileId) {
+      const guestId = data.profileId || data.id;
+      const secret = request.headers.get('X-Guest-Secret');
+      if (guestId && secret && GUEST_ID_RE.test(guestId)) {
+        const chk = await profiles.fetch(new Request('http://internal/check-guest', {
+          method: 'POST', body: JSON.stringify({ id: guestId, secretHash: await sha256Hex(secret) })
+        }));
+        if ((await chk.json()).ok) profileId = guestId;
+      }
+    }
+    if (!profileId) return json({ error: 'Auth required' }, 401, origin);
+    const action = path.endsWith('/join') ? 'join' : path.endsWith('/leave') ? 'leave' : path.endsWith('/objective') ? 'objective' : (data.action || 'create');
+    const response = await profiles.fetch(new Request('http://internal/squad', {
+      method: 'POST',
+      body: JSON.stringify({ ...data, action, profileId })
+    }));
+    return json(await response.json(), response.status, origin);
+  }
 
-      // GET profile
-      const id = url.searchParams.get('id') || '';
-      const response = await profiles.fetch(new Request(`http://internal/profile?id=${encodeURIComponent(id)}`));
-      const result = await response.json();
-      
-      return new Response(JSON.stringify(result), {
-        headers: { 'Content-Type': 'application/json', ...corsHeaders(origin) }
+  if (path === '/events' || path === '/api/events' || path === '/events.ics' || path === '/api/events.ics' || /^\/(?:api\/)?events\//.test(path)) {
+    const stub = eventsStub(env);
+    const forwarded = await stub.fetch(new Request('https://events.internal' + path + url.search, {
+      method: request.method,
+      headers: request.headers,
+      body: request.method === 'GET' || request.method === 'OPTIONS' ? undefined : await request.text()
+    }));
+    const ct = forwarded.headers.get('Content-Type') || '';
+    if (ct.includes('text/calendar') || path.endsWith('.ics')) {
+      return new Response(await forwarded.text(), {
+        status: forwarded.status,
+        headers: {
+          'Content-Type': 'text/calendar; charset=utf-8',
+          'Content-Disposition': 'attachment; filename="base-trenches.ics"',
+          ...corsHeaders(origin)
+        }
       });
     }
-    
-    // Leaderboard
-    if (url.pathname === '/api/leaderboard') {
-      const type = url.searchParams.get('type') === 'depth' ? 'depth' : 'xp';
-      const profilesId = env.PROFILES.idFromName(PROFILES_SHARD);
-      const profiles = env.PROFILES.get(profilesId);
-      
-      const response = await profiles.fetch(new Request(`http://internal/leaderboard?type=${type}`));
-      const result = await response.json();
-      
-      return new Response(JSON.stringify(result), {
-        headers: { 'Content-Type': 'application/json', ...corsHeaders(origin) }
-      });
-    }
-    
-    return new Response('Not found', { 
-      status: 404, 
-      headers: corsHeaders(origin) 
-    });
+    return json(await forwarded.json().catch(() => ({ error: 'bad' })), forwarded.status, origin);
   }
-}
 
-function b64urlToBytes(str) {
-  const b64 = str.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((str.length + 3) % 4);
-  return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-}
-function b64urlToJson(str) {
-  return JSON.parse(new TextDecoder().decode(b64urlToBytes(str)));
-}
-async function sha256Hex(text) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-let jwksCache = null;
-let jwksCachedAt = 0;
-async function getJwks() {
-  if (jwksCache && Date.now() - jwksCachedAt < 3600_000) return jwksCache;
-  const res = await fetch(`${FARCASTER_QUICK_AUTH_ISSUER}/.well-known/jwks.json`);
-  if (!res.ok) throw new Error('JWKS fetch failed: ' + res.status);
-  jwksCache = await res.json();
-  jwksCachedAt = Date.now();
-  return jwksCache;
-}
-
-// Verify Farcaster Quick Auth JWT (RS256, iss=https://auth.farcaster.xyz, sub=fid, aud=mini app domain)
-async function verifyFarcasterToken(token) {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    const [headerB64, payloadB64, signatureB64] = parts;
-    const header = b64urlToJson(headerB64);
-    if (header.alg !== 'RS256') return null;
-    
-    const jwks = await getJwks();
-    const key = jwks.keys.find(k => k.kid === header.kid);
-    if (!key) return null;
-    
-    const cryptoKey = await crypto.subtle.importKey(
-      'jwk',
-      { kty: key.kty, n: key.n, e: key.e, alg: 'RS256', ext: true },
-      { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-      false,
-      ['verify']
-    );
-    const valid = await crypto.subtle.verify(
-      'RSASSA-PKCS1-v1_5', cryptoKey, b64urlToBytes(signatureB64),
-      new TextEncoder().encode(`${headerB64}.${payloadB64}`)
-    );
-    if (!valid) return null;
-    
-    const payload = b64urlToJson(payloadB64);
-    const now = Date.now() / 1000;
-    if (!payload.exp || payload.exp < now) return null;
-    if (payload.nbf && payload.nbf > now + 60) return null;
-    if (payload.iss !== FARCASTER_QUICK_AUTH_ISSUER) return null;
-    const auds = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-    if (!auds.some(a => QUICK_AUTH_AUDIENCES.includes(a))) return null;
-    
-    const fid = Number(payload.sub);
-    return Number.isSafeInteger(fid) && fid > 0 ? fid : null;
-  } catch (e) {
-    console.error('Token verification error:', e);
-    return null;
-  }
+  return new Response('Not found', { status: 404, headers: corsHeaders(origin) });
 }

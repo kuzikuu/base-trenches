@@ -17,14 +17,17 @@ let pendingXp = 0;
 let chatCallbacks = [];
 let statusCallbacks = [];
 
+let roster = [];
+let rosterCallbacks = [];
+
 async function getWsUrl(profile) {
   const base = BT_CONFIG.serverUrl.replace(/^http/, 'ws');
   const q = new URLSearchParams({ room: 'main' });
   // Credentials let the server credit XP to this profile (browsers can't set WS headers)
-  if (profile && profile.fid) {
-    const token = await RPG.getAuthToken();
-    if (token) q.set('token', token);
-  } else if (profile && profile.id) {
+  const token = profile && typeof RPG !== 'undefined' ? await RPG.getAuthToken() : null;
+  if (token) {
+    q.set('token', token);
+  } else if (profile && profile.id && String(profile.id).startsWith('guest:')) {
     q.set('profileId', profile.id);
     q.set('secret', RPG.getGuestSecret());
   }
@@ -64,7 +67,8 @@ async function connect(profile) {
       name: profile.name,
       pfp: profile.pfp,
       level: profile.level,
-      equipped: profile.equipped
+      equipped: profile.equipped,
+      xHandle: profile.x_handle || profile.xHandle || null
     }));
   };
   
@@ -149,6 +153,7 @@ function handleMessage(data) {
         const [bx, by] = key.split(',').map(Number);
         if (typeof Game !== 'undefined' && Game.applyRemoteDig) Game.applyRemoteDig(bx, by);
       });
+      if (data.roster) { roster = data.roster; rosterCallbacks.forEach(cb => cb(roster)); }
       break;
       
     case 'join':
@@ -161,6 +166,7 @@ function handleMessage(data) {
           x: 0, y: 0, vx: 0, vy: 0, face: 1, swing: 0
         });
         playerCount = typeof data.playerCount === 'number' ? data.playerCount : playerCount + 1;
+        if (data.xHandle) players.get(data.playerId).xHandle = data.xHandle;
       }
       break;
       
@@ -171,6 +177,7 @@ function handleMessage(data) {
       
     case 'states':
       playerCount = data.playerCount;
+      if (data.roster) { roster = data.roster; rosterCallbacks.forEach(cb => cb(roster)); }
       data.players.forEach(p => {
         if (p.id !== playerId) {
           const existing = players.get(p.id);
@@ -185,11 +192,17 @@ function handleMessage(data) {
             existing.name = p.name;
             existing.pfp = p.pfp;
             existing.level = p.level;
+            existing.xHandle = p.xHandle;
+            existing.status = p.status;
           } else {
             players.set(p.id, { ...p, targetX: p.x, targetY: p.y });
           }
         }
       });
+      break;
+      
+    case 'xp':
+      if (typeof RPG !== 'undefined' && RPG.applyServerXp) RPG.applyServerXp(data);
       break;
       
     case 'dig':
@@ -236,44 +249,19 @@ function sendDig(x, y) {
   ws.send(JSON.stringify({ type: 'dig', x, y }));
 }
 
+function sendEvent(event) {
+  if (!connected || !ws || !event) return;
+  ws.send(JSON.stringify({ type: 'event', ...event }));
+}
+
 function sendChat(text) {
   if (!connected || !ws) return;
   ws.send(JSON.stringify({ type: 'chat', text }));
 }
 
-function sendXp(xp, depth) {
-  if (!connected || !ws) return;
-  const profile = RPG.getProfile();
-  if (!profile) return;
-  
-  pendingXp += xp;
-  
-  // Batch XP sends
-  if (pendingXp >= 5) {
-    ws.send(JSON.stringify({
-      type: 'xp',
-      xp: pendingXp,
-      depth,
-      profileId: profile.id
-    }));
-    pendingXp = 0;
-  }
-}
+function sendXp() { /* client XP amounts are ignored; use sendEvent */ }
 
-function flushXp(depth) {
-  if (pendingXp > 0 && connected && ws) {
-    const profile = RPG.getProfile();
-    if (profile) {
-      ws.send(JSON.stringify({
-        type: 'xp',
-        xp: pendingXp,
-        depth,
-        profileId: profile.id
-      }));
-    }
-    pendingXp = 0;
-  }
-}
+function flushXp() { pendingXp = 0; }
 
 function interpolatePlayers(dt) {
   const lerpSpeed = 10;
@@ -301,6 +289,10 @@ function onStatus(callback) {
   statusCallbacks.push(callback);
 }
 
+function onRoster(callback) {
+  rosterCallbacks.push(callback);
+}
+
 function isBlockDugByOthers(x, y) {
   return dugBlocks.has(`${x},${y}`);
 }
@@ -310,17 +302,20 @@ window.Multiplayer = {
   disconnect,
   sendState,
   sendDig,
+  sendEvent,
   sendChat,
   sendXp,
   flushXp,
   interpolatePlayers,
   onChat,
   onStatus,
+  onRoster,
   isBlockDugByOthers,
   get connected() { return connected; },
   get playerId() { return playerId; },
   get players() { return players; },
   get playerCount() { return playerCount; },
+  get roster() { return roster; },
   get worldSeed() { return worldSeed; },
   get dugBlocks() { return dugBlocks; }
 };

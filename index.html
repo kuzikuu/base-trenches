@@ -33,13 +33,15 @@
   </a>
   <nav id="menu">
     <a href="#play" data-nav="play">PLAY</a>
+    <a href="#campaign" data-nav="campaign">MAP</a>
+    <a href="#events" data-nav="events">EVENTS</a>
     <a href="#inventory" data-nav="inventory">GEAR</a>
     <a href="#leaderboard" data-nav="leaderboard">RANKS</a>
     <a href="#hot" data-nav="hot">HOT LIST</a>
-    <a href="#calls" data-nav="calls">CALLS</a>
     <a href="#about" data-nav="about">ABOUT</a>
   </nav>
   <div class="tools">
+    <button id="loginBtn" class="iconbtn hidden" aria-label="Sign in">LOGIN</button>
     <button id="muteBtn" class="iconbtn" aria-label="Toggle sound" title="Sound (M)">SND ON</button>
     <button id="hapticBtn" class="iconbtn" aria-label="Toggle haptics" title="Haptics">VIB ON</button>
     <button id="menuBtn" class="iconbtn only-mobile" aria-label="Menu">MENU</button>
@@ -61,8 +63,12 @@
       <div class="level" id="level">LV 1</div>
       <div class="xpbar"><span id="xpfill"></span></div>
       <div class="online-pill" id="online"><span id="onlineCount">0</span> ONLINE</div>
+      <div class="identity" id="identity"></div>
     </div>
+    <div id="eventBanner" class="event-banner hidden"></div>
     <div id="offlineBadge" class="offline-badge hidden">OFFLINE TRENCH</div>
+    <button type="button" id="rosterBtn" class="roster-btn hidden">ROSTER</button>
+    <div id="rosterPanel" class="roster-panel hidden"></div>
     <div id="chatLog" class="chat-log"></div>
     <div id="chatBox" class="chat-box">
       <div class="chat-emotes">
@@ -84,6 +90,7 @@
     <h1 class="dotmatrix huge">BASE<br>TRENCHES</h1>
     <div class="tag">POWER OF 9 <span>·</span> MANIFESTING 589x</div>
     <button class="bigbtn" id="startBtn">▶ START DIGGING</button>
+    <div class="home-online" id="homeOnline">TRENCH QUIET</div>
     <div class="keys only-desktop">←→ / A D MOVE · ↑ / W JUMP+CLIMB · ↓ / S AIM DOWN · SPACE DIG · E ENTER BUNKER</div>
     <div class="keys only-touch">USE THE PAD TO MOVE · ⛏ TO DIG</div>
     <div class="quick">
@@ -130,7 +137,7 @@
       <button id="closePanel" class="iconbtn" aria-label="Close">✕ ESC</button>
     </div>
     <div class="paneltabs">
-      <button data-nav="inventory">GEAR</button><button data-nav="leaderboard">RANKS</button><button data-nav="hot">HOT LIST</button><button data-nav="calls">CALLS</button><button data-nav="about">ABOUT</button>
+      <button data-nav="campaign">MAP</button><button data-nav="events">EVENTS</button><button data-nav="squad">SQUAD</button><button data-nav="inventory">GEAR</button><button data-nav="leaderboard">RANKS</button><button data-nav="hot">HOT LIST</button><button data-nav="about">ABOUT</button>
     </div>
     <div class="panelbody" id="panelBody"></div>
   </div>
@@ -143,6 +150,9 @@
 <script src="js/config.js"></script>
 <script src="js/haptics.js"></script>
 <script src="js/miniapp.js"></script>
+<script src="js/campaign.js"></script>
+<script src="js/privy.js"></script>
+<script src="js/events-ui.js"></script>
 <script src="js/rpg.js"></script>
 <script src="js/multiplayer.js"></script>
 <script src="js/pickaxe.js"></script>

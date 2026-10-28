@@ -20,7 +20,12 @@ Live at https://base-trenches-bot.base-trenches.workers.dev
   at 5 replies / 8 reposts / 9 likes a powered call becomes PINNED, announced and pinned.
   `GET /admin/pending` lists powered calls waiting on 5/8/9.
 - Cron `*/10 * * * *` refreshes DexScreener prices (calls from the last 30 days, tagging coins from
-  the last 7) and tracks the ATH price since the call (sampled every 10 min).
+  the last 7) and tracks the ATH price since the call (sampled every 10 min). The same cron fetches
+  `GAME_SERVER_URL/events` and announces in the vote group (`VOTE_CHAT_ID`) one hour before start,
+  and in the group **and** the channel (`ANNOUNCE_CHAT_ID`) at start. Event text is HTML-escaped.
+- `/events` lists live and upcoming events. Commands from an anonymous admin or “send as” the group
+  (`sender_chat` set, not an automatic forward) get one rate-limited reply to switch **Send as** to
+  a personal account; tags are not applied.
 - Public API (CORS for base-trenches.pages.dev, kuzikuu.github.io):
   `/api/health`, `/api/hot`, `/api/calls`, `/api/callers`, `/api/coin/:ca`.
 

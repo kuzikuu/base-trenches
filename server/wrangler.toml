@@ -14,11 +14,24 @@ class_name = "TrenchRoom"
 name = "PROFILES"
 class_name = "Profiles"
 
+[[durable_objects.bindings]]
+name = "EVENTS"
+class_name = "Events"
+
 # Migrations for SQLite-backed Durable Objects
 [[migrations]]
 tag = "v1"
 # Both SQLite-backed (required on the Workers Free plan)
 new_sqlite_classes = ["TrenchRoom", "Profiles"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Events"]
+
+# Public Privy app id (same value as js/config.js BT_PRIVY_APP_ID). Empty = Privy auth off.
+[vars]
+PRIVY_APP_ID = ""
+# EVENTS_ADMIN_KEY is a secret:  wrangler secret put EVENTS_ADMIN_KEY
 
 # For local development
 [dev]
