@@ -27,6 +27,17 @@ import {
 import {
   handleEventsApi
 } from './lib/events.js';
+import {
+  BOT_TICK_MS,
+  BOT_CHAT_MIN_GAP_MS,
+  ROLES,
+  isBotId,
+  targetRecruitCount,
+  createRecruit,
+  emoteReply,
+  publicRecruit
+} from './lib/recruits.js';
+import { parseGeo, geoHeader, aggregateGeo } from './lib/geo.js';
 
 const CORS_ORIGINS = [
   'https://base-trenches.pages.dev',
@@ -38,12 +49,22 @@ const CORS_ORIGINS = [
 const GUEST_ID_RE = /^guest:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PRIVY_ID_RE = /^did:privy:[a-zA-Z0-9]+$/;
 const MAX_PLAYERS_PER_ROOM = 50;
+// Overflow sharding: when 'main' is full, new players land in main-2 … main-8 ("sectors").
+const ROOM_SHARDS = 8;
+// Sectors stay in the presence fan-out for 15 min after the last overflow join.
+const SHARD_HINT_TTL_MS = 15 * 60 * 1000;
+// Every open tab polls /presence; cache the merged answer per isolate so sharding
+// does not multiply Durable Object requests.
+const PRESENCE_CACHE_MS = 5000;
+let presenceCache = null;
+function shardName(i) { return i === 0 ? 'main' : `main-${i + 1}`; }
 const PROFILES_SHARD = 'season-1';
 const EVENTS_SHARD = 'calendar-1';
 const BROADCAST_INTERVAL_MS = 100;
 const CHAT_RATE_LIMIT_MS = 2000;
 const CHAT_MAX_LENGTH = 60;
 const IDLE_MS = 15_000;
+const BOT_PAUSE_IDLE_MS = 60_000; // recruits freeze when every human has been idle this long
 const SQUAD_MAX = 9;
 const RAID_SURVIVES = 5; // boss raid = survive this many barrages in one session (js/campaign.js)
 
@@ -161,6 +182,11 @@ export class TrenchRoom {
     this.raidSurvives = new Map(); // sessionId -> barrages survived since the last boss raid
     this.lastBroadcast = 0;
     this.seed = null;
+    // NPC recruits live only in memory and only while at least one human is connected.
+    this.bots = new Map();
+    this.botSeq = 0;
+    this.botTimer = null;
+    this.lastBotTick = 0;
     this.state.blockConcurrencyWhile(async () => {
       this.seed = await this.state.storage.get('seed');
       if (!this.seed) {
@@ -173,8 +199,24 @@ export class TrenchRoom {
 
   async fetch(request) {
     const url = new URL(request.url);
+    const roomHeader = request.headers.get('X-BT-Room');
+    if (roomHeader) this.roomName = roomHeader;
+    if (request.method === 'POST' && url.pathname === '/shard-hint') {
+      // Only 'main' keeps this: the highest overflow sector used recently, so presence can sum them.
+      const n = Math.max(1, Math.min(ROOM_SHARDS, Number(url.searchParams.get('n')) || 1));
+      const cur = (await this.state.storage.get('shardHint')) || { n: 1, at: 0 };
+      const fresh = Date.now() - cur.at < SHARD_HINT_TTL_MS;
+      if (!fresh || n >= cur.n) await this.state.storage.put('shardHint', { n: Math.max(n, fresh ? cur.n : 1), at: Date.now() });
+      return Response.json({ ok: true });
+    }
+    if (request.method === 'GET' && url.pathname === '/shard-hint') {
+      const cur = (await this.state.storage.get('shardHint')) || { n: 1, at: 0 };
+      return Response.json({ n: Date.now() - cur.at < SHARD_HINT_TTL_MS ? cur.n : 1 });
+    }
     if (request.headers.get('Upgrade') === 'websocket') {
-      if (this.state.getWebSockets().length >= MAX_PLAYERS_PER_ROOM) {
+      // ROOM_CAP lets the preview worker raise the cap for load tests; prod uses the constant.
+      const cap = Math.max(1, Math.min(1000, Number(this.env && this.env.ROOM_CAP) || MAX_PLAYERS_PER_ROOM));
+      if (this.state.getWebSockets().length >= cap) {
         return new Response('Room full', { status: 503 });
       }
       const pair = new WebSocketPair();
@@ -182,25 +224,39 @@ export class TrenchRoom {
       this.state.acceptWebSocket(server);
       const sessionId = crypto.randomUUID();
       const verifiedProfileId = request.headers.get('X-BT-Profile') || null;
+      // Country/continent only (from request.cf in the Worker). No IP or finer location is kept.
+      const geo = parseGeo(request.headers.get('X-BT-Geo'));
       server.serializeAttachment({
         sessionId,
         verifiedProfileId,
+        geo,
         joined: Date.now(),
         lastDepthAwarded: 0
       });
       return new Response(null, { status: 101, webSocket: client });
     }
     if (request.method === 'GET' && (url.pathname === '/presence' || url.pathname === '/')) {
-      return Response.json(this.presence());
+      const body = this.presence();
+      if (this.roomName === 'main') {
+        const cur = (await this.state.storage.get('shardHint')) || { n: 1, at: 0 };
+        body.shards = Date.now() - cur.at < SHARD_HINT_TTL_MS ? cur.n : 1;
+      }
+      return Response.json(body);
     }
     return new Response('Expected WebSocket', { status: 400 });
   }
 
+  // Humans only. Recruits are reported separately and never counted as players.
   presence() {
     const now = Date.now();
     const players = this.getActivePlayers(null, now);
+    const geo = aggregateGeo(this.humanGeos());
     return {
       online: players.length,
+      recruits: this.bots.size,
+      regions: geo.regions,
+      countries: geo.countries,
+      unknownRegion: geo.unknown,
       players: players.map(p => ({
         id: p.id,
         name: p.name,
@@ -211,10 +267,104 @@ export class TrenchRoom {
     };
   }
 
+  humanGeos() {
+    const out = [];
+    for (const ws of this.state.getWebSockets()) {
+      const a = ws.deserializeAttachment();
+      if (a && a.playerId && !a.bot) out.push(a.geo || null);
+    }
+    return out;
+  }
+
+  humanCount(excludeWs = null) {
+    let n = 0;
+    for (const ws of this.state.getWebSockets()) {
+      if (ws === excludeWs) continue;
+      const a = ws.deserializeAttachment();
+      if (a && a.playerId && !a.bot) n++;
+    }
+    return n;
+  }
+
+  // ---- NPC recruits -------------------------------------------------------
+  // One setTimeout chain at BOT_TICK_MS. It stops as soon as no human is connected,
+  // so an empty room has no timers and can hibernate. After hibernation the next
+  // human message restarts it (ensureBotTicker in webSocketMessage / handleJoin).
+  ensureBotTicker() {
+    if (this.botTimer) return;
+    this.botTimer = setTimeout(() => { this.botTimer = null; this.botTick(); }, BOT_TICK_MS);
+  }
+
+  stopBots(excludeWs = null) {
+    if (this.botTimer) { clearTimeout(this.botTimer); this.botTimer = null; }
+    for (const id of this.bots.keys()) this.broadcast({ type: 'leave', playerId: id, bot: true, playerCount: this.humanCount(excludeWs) }, excludeWs);
+    this.bots.clear();
+  }
+
+  botTick(now = Date.now()) {
+    const humans = this.humanCount();
+    if (humans === 0) { this.stopBots(); return; }
+    const dtMs = this.lastBotTick ? Math.min(3000, now - this.lastBotTick) : BOT_TICK_MS;
+    this.lastBotTick = now;
+    // Ramp one recruit per tick toward the target for this many humans.
+    const target = targetRecruitCount(humans);
+    if (this.bots.size < target) {
+      const b = createRecruit(++this.botSeq, Math.random, now);
+      this.bots.set(b.id, b);
+      this.broadcast({ type: 'join', playerId: b.id, bot: true, role: b.role, name: b.name, pfp: null, level: b.level, xHandle: null, playerCount: humans, recruitCount: this.bots.size });
+    } else if (this.bots.size > target) {
+      const id = this.bots.keys().next().value;
+      this.bots.delete(id);
+      this.broadcast({ type: 'leave', playerId: id, bot: true, playerCount: humans, recruitCount: this.bots.size });
+    }
+    for (const b of this.bots.values()) {
+      const role = ROLES[b.role] || ROLES.recruit;
+      const effects = role.step(b, now, Math.random, { dtMs, recruits: this.bots.size });
+      for (const e of effects) {
+        if (e.type === 'chat' && now - (this.lastBotChat || 0) >= BOT_CHAT_MIN_GAP_MS) {
+          this.lastBotChat = now;
+          this.broadcast({ type: 'chat', playerId: b.id, bot: true, name: b.name, text: e.text });
+        }
+      }
+    }
+    // Human state updates already broadcast at up to 10 Hz; only push a frame if they went quiet.
+    if (this.bots.size && now - this.lastBroadcast >= BOT_TICK_MS - 50) {
+      this.lastBroadcast = now;
+      this.broadcastStates(now);
+    }
+    // If every human has gone idle (background tab, AFK), pause the ticker so the DO can
+    // hibernate; the next human message restarts it.
+    if (this.lastHumanActivity() < now - BOT_PAUSE_IDLE_MS) return;
+    this.ensureBotTicker();
+  }
+
+  lastHumanActivity() {
+    let t = 0;
+    for (const ws of this.state.getWebSockets()) {
+      const a = ws.deserializeAttachment();
+      if (a && a.playerId && !a.bot) t = Math.max(t, a.lastUpdate || a.joined || 0);
+    }
+    return t;
+  }
+
+  maybeBotEmoteReply(text) {
+    if (!this.bots.size) return;
+    const reply = emoteReply(text);
+    if (!reply) return;
+    const list = [...this.bots.values()];
+    const b = list[(Math.random() * list.length) | 0];
+    setTimeout(() => {
+      if (!this.bots.has(b.id)) return;
+      this.lastBotChat = Date.now();
+      this.broadcast({ type: 'chat', playerId: b.id, bot: true, name: b.name, text: reply });
+    }, 900 + Math.random() * 1800);
+  }
+
   async webSocketMessage(ws, message) {
     try {
       const data = JSON.parse(message);
       const attachment = ws.deserializeAttachment() || {};
+      if (attachment.playerId) this.ensureBotTicker();
       switch (data.type) {
         case 'join': await this.handleJoin(ws, data, attachment); break;
         case 'state': await this.handleStateUpdate(ws, data, attachment); break;
@@ -237,6 +387,7 @@ export class TrenchRoom {
     if (attachment.playerId) {
       const playerCount = this.getActivePlayers(ws).length;
       this.broadcast({ type: 'leave', playerId: attachment.playerId, playerCount }, ws);
+      if (this.humanCount(ws) === 0) this.stopBots(ws);
     }
   }
 
@@ -264,11 +415,14 @@ export class TrenchRoom {
       type: 'init',
       playerId,
       seed: this.seed,
-      players,
+      sector: this.roomName || null,
+      players: players.concat([...this.bots.values()].map(publicRecruit)),
       dugBlocks: Array.from(this.dugBlocks.entries()).slice(-500),
       playerCount: players.length,
+      recruitCount: this.bots.size,
       roster: this.presence().players
     }));
+    this.ensureBotTicker();
     this.broadcast({
       type: 'join',
       playerId,
@@ -352,6 +506,7 @@ export class TrenchRoom {
     attachment.lastUpdate = now;
     ws.serializeAttachment(attachment);
     this.broadcast({ type: 'chat', playerId: attachment.playerId, text, name: attachment.name });
+    this.maybeBotEmoteReply(text);
   }
 
   async handleGameEvent(ws, data, attachment) {
@@ -377,6 +532,7 @@ export class TrenchRoom {
   }
 
   async creditScored(ws, attachment, event, result) {
+    if (attachment.bot || isBotId(attachment.playerId) || isBotId(attachment.verifiedProfileId)) return { ok: false, reason: 'bot', xp: 0 };
     const serverXp = SERVER_XP_KINDS.has(event.kind);
     if (!result.ok || (!result.xp && !serverXp)) return result;
 
@@ -408,6 +564,7 @@ export class TrenchRoom {
   }
 
   async maybeEventScore(profileId, name, xp) {
+    if (isBotId(profileId)) return;
     try {
       const events = this.env.EVENTS.get(this.env.EVENTS.idFromName(EVENTS_SHARD));
       await events.fetch(new Request('http://internal/score', {
@@ -438,13 +595,14 @@ export class TrenchRoom {
     return players;
   }
 
-  broadcastStates() {
-    const now = Date.now();
+  broadcastStates(now = Date.now()) {
     const players = this.getActivePlayers(null, now);
     const roster = players.map(p => ({
       id: p.id, name: p.name, level: p.level, xHandle: p.xHandle, status: p.status
     }));
-    this.broadcast(JSON.stringify({ type: 'states', players, playerCount: players.length, roster }), null, true);
+    // playerCount and roster are humans only; recruits ride along in players[] with bot:true.
+    const all = this.bots.size ? players.concat([...this.bots.values()].map(publicRecruit)) : players;
+    this.broadcast(JSON.stringify({ type: 'states', players: all, playerCount: players.length, recruitCount: this.bots.size, roster }), null, true);
   }
 
   broadcast(data, excludeWs = null, isString = false) {
@@ -1039,6 +1197,32 @@ async function requireProfileWrite(request, env, dataId) {
   return { error: 'Invalid profile id', status: 400 };
 }
 
+// Humans online across 'main' and any overflow sectors in use. Recruits reported separately.
+async function presenceAll(env) {
+  const stub = (name) => env.TRENCH_ROOM.get(env.TRENCH_ROOM.idFromName(name));
+  const main = await (await stub('main').fetch(new Request('http://internal/presence', { headers: { 'X-BT-Room': 'main' } }))).json();
+  const n = Math.max(1, Math.min(ROOM_SHARDS, Number(main.shards) || 1));
+  delete main.shards;
+  const parts = [main];
+  if (n > 1) {
+    const extra = await Promise.all(Array.from({ length: n - 1 }, (_, i) =>
+      stub(shardName(i + 1)).fetch(new Request('http://internal/presence', { headers: { 'X-BT-Room': shardName(i + 1) } }))
+        .then(r => r.json()).catch(() => null)));
+    parts.push(...extra.filter(Boolean));
+  }
+  const out = { online: 0, recruits: 0, regions: {}, countries: {}, unknownRegion: 0, players: [], sectors: [] };
+  parts.forEach((p, i) => {
+    out.online += p.online || 0;
+    out.recruits += p.recruits || 0;
+    out.unknownRegion += p.unknownRegion || 0;
+    for (const [k, v] of Object.entries(p.regions || {})) out.regions[k] = (out.regions[k] || 0) + v;
+    for (const [k, v] of Object.entries(p.countries || {})) out.countries[k] = (out.countries[k] || 0) + v;
+    if (out.players.length < 200) out.players.push(...(p.players || []).slice(0, 200 - out.players.length));
+    out.sectors.push({ name: shardName(i), online: p.online || 0 });
+  });
+  return out;
+}
+
 function profilesStub(env) {
   return env.PROFILES.get(env.PROFILES.idFromName(PROFILES_SHARD));
 }
@@ -1081,10 +1265,11 @@ async function handleRequest(request, env, ctx) {
   }
 
   if (path === '/presence' || path === '/api/presence') {
-    const room = env.TRENCH_ROOM.get(env.TRENCH_ROOM.idFromName('main'));
-    const res = await room.fetch(new Request('http://internal/presence'));
-    const body = await res.json();
-    return json(body, 200, origin);
+    const now = Date.now();
+    if (!presenceCache || now - presenceCache.at > PRESENCE_CACHE_MS) {
+      presenceCache = { at: now, body: presenceAll(env).catch((e) => { presenceCache = null; throw e; }) };
+    }
+    return json(await presenceCache.body, 200, origin);
   }
 
   if (path === '/api/ws') {
@@ -1092,7 +1277,6 @@ async function handleRequest(request, env, ctx) {
       return new Response('Expected WebSocket', { status: 426, headers: corsHeaders(origin) });
     }
     const roomName = (url.searchParams.get('room') || 'main').replace(/[^a-z0-9_-]/gi, '').slice(0, 32) || 'main';
-    const room = env.TRENCH_ROOM.get(env.TRENCH_ROOM.idFromName(roomName));
     let verifiedProfileId = null;
     const token = url.searchParams.get('token');
     const guestId = url.searchParams.get('profileId');
@@ -1109,8 +1293,26 @@ async function handleRequest(request, env, ctx) {
     }
     const headers = new Headers(request.headers);
     headers.delete('X-BT-Profile');
+    headers.delete('X-BT-Geo');
     if (verifiedProfileId) headers.set('X-BT-Profile', verifiedProfileId);
-    return room.fetch(new Request(request, { headers }));
+    headers.set('X-BT-Geo', geoHeader(request.cf));
+    // 'main' overflows into sectors main-2 … main-8 when full (503). Other room names are used as-is.
+    const tries = roomName === 'main' ? ROOM_SHARDS : 1;
+    let res;
+    for (let i = 0; i < tries; i++) {
+      const name = roomName === 'main' ? shardName(i) : roomName;
+      headers.set('X-BT-Room', name);
+      res = await env.TRENCH_ROOM.get(env.TRENCH_ROOM.idFromName(name)).fetch(new Request(request, { headers }));
+      if (res.status !== 503) {
+        if (i > 0) {
+          const hint = env.TRENCH_ROOM.get(env.TRENCH_ROOM.idFromName('main'))
+            .fetch(new Request(`http://internal/shard-hint?n=${i + 1}`, { method: 'POST' })).catch(() => {});
+          if (ctx && ctx.waitUntil) ctx.waitUntil(hint);
+        }
+        return res;
+      }
+    }
+    return res;
   }
 
   if (path === '/api/profile/migrate' && request.method === 'POST') {
