@@ -17,6 +17,9 @@ const MAX_LEVEL = 9999;
 const THEMES = [
   { id: 'trenches', name: 'The Trenches', campaign: 'Campaign 1', accent: '#8a5a2b', accent2: '#c9a27a', ink: '#0b1a8f', bed: '#0a2fd1', pale: '#c9d6ff', dens: [0.15, 0.25, 0.37], invert: false, props: 'wire',
     title: 'Trencher', boss: 'Zero Hour', relic: 'trench relic', blurb: 'Mud, wire and the duckboards.' },
+  // Level 2, Sinai front, 1916: a desert level with a nod to a certain spice-and-sandworm epic.
+  { id: 'sands', name: 'The Dust Sea', campaign: 'Desert Column', accent: '#ffd400', accent2: '#c9a27a', ink: '#0b1a8f', bed: '#0a2fd1', pale: '#fff3b8', dens: [0.1, 0.18, 0.28], invert: false, props: 'dune',
+    title: 'Sand Rider', boss: 'Sandmaw', relic: 'spice tin', blurb: 'Sinai sand all the way down. Step soft, step odd.' },
   { id: 'mines', name: "Tunnellers' Mines", campaign: 'The Tunnellers', accent: '#c9a27a', accent2: '#ffd400', ink: '#0b1a8f', bed: '#0a2fd1', pale: '#c9d6ff', dens: [0.3, 0.4, 0.5], invert: false, props: 'timber',
     title: 'Tunneller', boss: 'The Great Mine', relic: 'miner\'s lamp', blurb: 'Timbered galleries. Sappers in the dark. Listen for the charges.' },
   { id: 'chalk', name: 'Chalk Caverns', campaign: 'The Chalk Line', accent: '#c9d6ff', accent2: '#16e0ff', ink: '#0052ff', bed: '#7fa0ff', pale: '#e6ecff', dens: [0.06, 0.1, 0.16], invert: false, props: 'chalk',
@@ -26,10 +29,7 @@ const THEMES = [
   { id: 'ember', name: 'Hellfire Corner', campaign: 'Hellfire', accent: '#ff2bd6', accent2: '#ffd400', ink: '#0b1a8f', bed: '#0a2fd1', pale: '#ffd6f6', dens: [0.22, 0.34, 0.46], invert: false, props: 'ember',
     title: 'Firewalker', boss: 'The Furnace', relic: 'molten medal', blurb: 'Hot rock and burning seams. Everything down here bites.' },
   { id: 'core', name: 'The Base Core', campaign: 'Onchain', accent: '#16e0ff', accent2: '#22e36b', ink: '#ffffff', bed: '#0b1a8f', pale: '#3d74ff', dens: [0.55, 0.65, 0.75], invert: true, props: 'circuit',
-    title: 'Core Runner', boss: 'The Sequencer', relic: 'genesis block', blurb: 'Blue all the way down. The trench runs onchain.' },
-  // Sinai front, 1916: a desert level with a nod to a certain spice-and-sandworm epic.
-  { id: 'sands', name: 'The Dust Sea', campaign: 'Desert Column', accent: '#ffd400', accent2: '#c9a27a', ink: '#0b1a8f', bed: '#0a2fd1', pale: '#fff3b8', dens: [0.1, 0.18, 0.28], invert: false, props: 'dune',
-    title: 'Sand Rider', boss: 'Sandmaw', relic: 'spice tin', blurb: 'Sinai sand all the way down. Walk without rhythm.' }
+    title: 'Core Runner', boss: 'The Sequencer', relic: 'genesis block', blurb: 'Blue all the way down. The trench runs onchain.' }
 ];
 
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
@@ -155,7 +155,7 @@ function levelChapter(level) {
 const CRAWLERS = {
   trenches: [
     { id: 'mudling', name: 'Mudling', kind: 'walker', body: '#8a5a2b', eye: '#ffd400', tag: 'NEVER FEED AFTER MIDNIGHT' },
-    { id: 'wireskitter', name: 'Wire Skitter', kind: 'hopper', body: '#0b1a8f', eye: '#ff2bd6', tag: 'WANT TO KNOW MORE?' }
+    { id: 'wireskitter', name: 'Wire Skitter', kind: 'hopper', body: '#0b1a8f', eye: '#ff2bd6', tag: 'ENLIST TODAY, DIG TOMORROW' }
   ],
   mines: [
     { id: 'hissbug', name: 'Hissbug', kind: 'fuser', body: '#22e36b', eye: '#0b1a8f', tag: 'SSSSSS...' },
@@ -179,7 +179,7 @@ const CRAWLERS = {
   ],
   sands: [
     { id: 'spicemite', name: 'Spice Mite', kind: 'swarmer', body: '#ffd400', eye: '#ff2bd6', tag: 'THE DIRT MUST FLOW' },
-    { id: 'wormling', name: 'Wormling', kind: 'burrower', body: '#c9a27a', eye: '#0b1a8f', tag: 'WALK WITHOUT RHYTHM' }
+    { id: 'wormling', name: 'Wormling', kind: 'burrower', body: '#c9a27a', eye: '#0b1a8f', tag: 'STEP SOFT, STEP ODD' }
   ]
 };
 const CRAWLER_KINDS = ['walker', 'hopper', 'fuser', 'dropper', 'spitter', 'blinker', 'swarmer', 'burrower'];

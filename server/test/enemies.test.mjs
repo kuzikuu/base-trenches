@@ -27,10 +27,15 @@ test('every theme has two original crawlers with known behaviours', () => {
   for (const L of [1, 2, 7, 8, 14]) assert.equal(crawlersFor(L), CRAWLERS[themeFor(L).id]);
 });
 
-test('desert theme exists and levels 1-6 keep their themes', () => {
-  assert.deepEqual(THEMES.slice(0, 6).map(t => t.id), ['trenches', 'mines', 'chalk', 'flooded', 'ember', 'core']);
-  assert.equal(THEMES[6].id, 'sands');
-  assert.equal(themeFor(7).id, 'sands');
+test('desert theme is level 2 and the other themes shift down one', () => {
+  assert.deepEqual(THEMES.map(t => t.id), ['trenches', 'sands', 'mines', 'chalk', 'flooded', 'ember', 'core']);
+  assert.equal(themeFor(1).id, 'trenches');
+  assert.equal(themeFor(2).id, 'sands');
+  assert.equal(themeFor(3).id, 'mines');
+  assert.equal(themeFor(7).id, 'core');
+  // callouts are our own lines, not quotes
+  for (const c of Object.values(CRAWLERS).flat()) assert.doesNotMatch(c.tag || '', /without rhythm|know more/i);
+  for (const t of THEMES) assert.doesNotMatch(t.blurb, /without rhythm|know more/i);
   assert.equal(difficulty(1).enemyCount, 0, 'old raider count unchanged');
 });
 

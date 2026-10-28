@@ -49,7 +49,8 @@ test('difficulty grows without a cap', () => {
 
 test('themes cycle with variations', () => {
   assert.equal(themeFor(1).id, 'trenches');
-  assert.equal(themeFor(2).id, 'mines');
+  assert.equal(themeFor(2).id, 'sands');
+  assert.equal(themeFor(3).id, 'mines');
   assert.equal(themeFor(1 + THEMES.length).id, 'trenches');
   assert.notEqual(themeFor(1 + THEMES.length).displayName, themeFor(1).displayName);
   assert.equal(themeFor(1 + THEMES.length).cycle, 1);
