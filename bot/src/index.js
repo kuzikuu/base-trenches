@@ -53,6 +53,9 @@ export class BotDO extends DurableObject {
         } catch { return null; }
       },
       groupId: env.GROUP_ID, channelId: env.CHANNEL_ID,
+      voteChatId: env.VOTE_CHAT_ID || env.GROUP_ID,
+      announceChatId: env.ANNOUNCE_CHAT_ID || env.CHANNEL_ID,
+      eventsUrl: env.GAME_SERVER_URL ? String(env.GAME_SERVER_URL).replace(/\/$/, "") + "/events" : "",
       ownerIds: String(env.OWNER_TG_IDS || "").split(/[\s,]+/),
       botUsername: env.BOT_USERNAME || "Powerof9BaseBot",
       log: (...a) => console.log(JSON.stringify(a)),
@@ -91,10 +94,11 @@ export class BotDO extends DurableObject {
 
     if (p === "/__cron" && req.headers.get("x-internal-cron") === "1") {
       const prices = await this.bot.refreshPrices();
+      const events = await this.bot.announceDueEvents();
       if (this.sink.config()) this.sink.backfill();
       const adb = await this.sink.flush(200);
       await this.armAlarm();
-      return json({ prices, adb });
+      return json({ prices, events, adb });
     }
 
     if (p === "/__bootstrap") {

@@ -4,8 +4,10 @@
 
 const STORAGE_KEY = 'bt_profile';
 const GUEST_SECRET_KEY = 'bt_guest_secret';
+const PREV_ID_KEY = 'bt_prev_profile_id';
 
 let profile = null;
+let serverXpLocked = false;
 let levelUpCallbacks = [];
 let gearDropCallbacks = [];
 
@@ -76,9 +78,20 @@ function createDefaultProfile(id, name, pfp, fid) {
       boots: null,
       charm: null
     },
+    x_handle: null,
+    wallet: null,
+    titles: [],
+    campaign: {},
     created_at: Date.now(),
     updated_at: Date.now()
   };
+}
+
+function applyPrivyIdentity() {
+  if (typeof BTPrivy === 'undefined' || !BTPrivy.enabled()) return null;
+  const snap = BTPrivy.snapshot();
+  if (!snap.did) return null;
+  return snap;
 }
 
 async function loadProfile() {
@@ -95,8 +108,15 @@ async function loadProfile() {
     fcName = MiniApp.context.user.username || MiniApp.context.user.displayName;
     fcPfp = MiniApp.context.user.pfpUrl;
   }
+
+  if (typeof BTPrivy !== 'undefined' && BTPrivy.enabled()) {
+    try { await BTPrivy.init(); } catch (e) {}
+  }
+  const privy = applyPrivyIdentity();
   
-  const profileId = fid ? `fid:${fid}` : (localStorage.getItem(STORAGE_KEY + '_id') || generateId());
+  const profileId = privy && privy.did
+    ? privy.did
+    : (fid ? `fid:${fid}` : (localStorage.getItem(STORAGE_KEY + '_id') || generateId()));
   
   // Try to load from server
   try {
@@ -109,9 +129,17 @@ async function loadProfile() {
         // Update name/pfp from Farcaster if available
         if (fcName) profile.name = fcName;
         if (fcPfp) profile.pfp = fcPfp;
+        if (privy) {
+          if (privy.xHandle) profile.x_handle = privy.xHandle;
+          if (privy.wallet) profile.wallet = privy.wallet;
+          if (privy.did) profile.id = privy.did;
+        }
         if (!profile.equipped) profile.equipped = {};
         if (!Array.isArray(profile.inventory)) profile.inventory = [];
+        if (data.campaign && typeof Campaign !== 'undefined') Campaign.applyServer(data.campaign);
+        serverXpLocked = true;
         saveLocal();
+        if (privy) await maybeMigrate(privy);
         return profile;
       }
     }
@@ -136,17 +164,26 @@ async function loadProfile() {
   }
   
   // Save ID for guests
-  if (!fid) {
+  if (!fid && !(privy && privy.did)) {
     localStorage.setItem(STORAGE_KEY + '_id', profileId);
+  }
+  if (privy) {
+    if (privy.xHandle) profile.x_handle = privy.xHandle;
+    if (privy.wallet) profile.wallet = privy.wallet;
+    profile.id = privy.did;
   }
   
   saveLocal();
   // Register the profile server-side so the WebSocket can be verified for XP credit
   await saveToServer();
+  if (privy) await maybeMigrate(privy);
   return profile;
 }
 
 async function getAuthToken() {
+  if (profile && profile.id && String(profile.id).startsWith('did:privy:') && typeof BTPrivy !== 'undefined') {
+    try { return await BTPrivy.getAccessToken(); } catch (e) {}
+  }
   if (!(profile && profile.fid)) return null; // guests use the guest secret instead
   if (typeof miniapp !== 'undefined' && miniapp.sdk && miniapp.sdk.quickAuth) {
     try {
@@ -158,6 +195,35 @@ async function getAuthToken() {
     }
   }
   return null;
+}
+
+async function maybeMigrate(privy) {
+  if (!privy || !privy.did) return;
+  const prev = localStorage.getItem(PREV_ID_KEY) || localStorage.getItem(STORAGE_KEY + '_id');
+  const fromFc = profile && profile.fid ? `fid:${profile.fid}` : null;
+  const fromId = (prev && prev !== privy.did && (prev.startsWith('guest:') || prev.startsWith('fid:'))) ? prev : fromFc;
+  if (!fromId || fromId === privy.did) return;
+  try {
+    const token = await getAuthToken();
+    if (!token) return;
+    const headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token };
+    const body = { from: fromId };
+    if (fromId.startsWith('guest:')) {
+      body.guestSecret = getGuestSecret();
+      headers['X-Guest-Secret'] = getGuestSecret();
+    } else if (fromId.startsWith('fid:') && typeof miniapp !== 'undefined' && miniapp.sdk && miniapp.sdk.quickAuth) {
+      try { body.farcasterToken = (await miniapp.sdk.quickAuth.getToken()).token; } catch (e) {}
+    }
+    const res = await fetch(`${BT_CONFIG.serverUrl}/api/profile/migrate`, { method: 'POST', headers, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => null);
+    if (data && data.success && data.profile) {
+      profile = data.profile;
+      localStorage.setItem(PREV_ID_KEY, fromId);
+      saveLocal();
+    }
+  } catch (e) {
+    console.warn('[RPG] migrate skipped', e);
+  }
 }
 
 function saveLocal() {
@@ -172,22 +238,90 @@ async function saveToServer() {
   
   try {
     const token = await getAuthToken();
-    await fetch(`${BT_CONFIG.serverUrl}/api/profile`, {
+    const guest = !token && !(profile.fid);
+    // Do not POST xp/level — the server owns those now.
+    const body = {
+      id: profile.id,
+      fid: profile.fid || null,
+      name: profile.name,
+      pfp: profile.pfp,
+      equipped: profile.equipped,
+      x_handle: profile.x_handle || null,
+      wallet: profile.wallet || null
+    };
+    const res = await fetch(`${BT_CONFIG.serverUrl}/api/profile`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        ...(!profile.fid ? { 'X-Guest-Secret': getGuestSecret() } : {})
+        ...(guest ? { 'X-Guest-Secret': getGuestSecret() } : {})
       },
-      body: JSON.stringify(profile)
+      body: JSON.stringify(body)
     });
+    const data = await res.json().catch(() => null);
+    if (data && data.profile) {
+      applyServerProfile(data.profile);
+    }
   } catch (e) {
     console.warn('[RPG] Failed to save to server:', e);
   }
 }
 
+function applyServerProfile(next) {
+  if (!next || !profile) return;
+  const oldLevel = profile.level;
+  profile.xp = next.xp;
+  profile.level = next.level;
+  profile.best_depth = Math.max(profile.best_depth || 0, next.best_depth || 0);
+  if (Array.isArray(next.inventory)) profile.inventory = next.inventory;
+  if (next.equipped) profile.equipped = next.equipped;
+  if (next.x_handle) profile.x_handle = next.x_handle;
+  if (next.wallet) profile.wallet = next.wallet;
+  if (Array.isArray(next.titles)) profile.titles = next.titles;
+  if (next.campaign && typeof Campaign !== 'undefined') Campaign.applyServer({ ...next.campaign, titles: next.titles });
+  serverXpLocked = true;
+  if (next.level > oldLevel) {
+    levelUpCallbacks.forEach(cb => cb(next.level, oldLevel));
+  }
+  saveLocal();
+}
+
+function applyServerXp(result) {
+  if (!profile || !result) return;
+  const oldLevel = profile.level;
+  if (typeof result.newXp === 'number') profile.xp = result.newXp;
+  if (typeof result.newLevel === 'number') profile.level = result.newLevel;
+  if (result.gearDrop) {
+    profile.inventory.push(result.gearDrop);
+    gearDropCallbacks.forEach(cb => cb(result.gearDrop));
+  }
+  if (result.rewards) {
+    result.rewards.forEach(r => {
+      if (r.gear) {
+        profile.inventory.push(r.gear);
+        gearDropCallbacks.forEach(cb => cb(r.gear));
+      }
+    });
+  }
+  if (result.campaign && typeof Campaign !== 'undefined') Campaign.applyServer(result.campaign);
+  if (result.titles) profile.titles = result.titles;
+  serverXpLocked = true;
+  if (profile.level > oldLevel) {
+    levelUpCallbacks.forEach(cb => cb(profile.level, oldLevel));
+    if (typeof Haptics !== 'undefined') Haptics.notification('success');
+    if (typeof Sfx !== 'undefined') Sfx.play('power');
+  }
+  saveLocal();
+}
+
 function addXp(amount, source) {
   if (!profile) return;
+  // Online: server scores events. Keep a local HUD bump only when offline.
+  const online = typeof Multiplayer !== 'undefined' && Multiplayer.connected && serverXpLocked;
+  if (online) {
+    saveLocal();
+    return;
+  }
   
   const oldLevel = profile.level;
   profile.xp += amount;
@@ -205,11 +339,6 @@ function addXp(amount, source) {
     if (typeof Sfx !== 'undefined') {
       Sfx.play('power');
     }
-  }
-  
-  // Send to server
-  if (typeof Multiplayer !== 'undefined') {
-    Multiplayer.sendXp(amount, profile.best_depth);
   }
   
   saveLocal();
@@ -359,6 +488,8 @@ window.RPG = {
   loadProfile,
   saveToServer,
   addXp,
+  applyServerXp,
+  applyServerProfile,
   updateStats,
   tryGearDrop,
   equipGear,
@@ -371,6 +502,7 @@ window.RPG = {
   getProfile: () => profile,
   getAuthToken,
   getGuestSecret,
+  maybeMigrate,
   GEAR_TEMPLATES,
   GEAR_RARITIES,
   RARITY_COLORS

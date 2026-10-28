@@ -140,6 +140,72 @@ test("engagement pins at 5/8/9 only for powered calls", async () => {
   assert.equal((await bot.engagement({ ca: CA, replies: -1, reposts: 1, likes: 1 })).status, 400);
 });
 
+test("anonymous admin or send-as-group gets one Send as warning (rate-limited per chat)", async () => {
+  const { bot, sent } = await setup();
+  const anon = (text) => bot.handleUpdate({
+    update_id: Date.now(),
+    message: {
+      message_id: sent.length + 50,
+      chat: { id: GROUP, type: "supergroup" },
+      sender_chat: { id: GROUP, type: "supergroup", title: "Base Trenches" },
+      from: { id: 1087968824, is_bot: true, username: "GroupAnonymousBot", first_name: "Group" },
+      text,
+    },
+  });
+  await anon(`/tag ${CA}`);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].params.text, /Send as/);
+  assert.ok(sent[0].params.text.includes("personal account"));
+  assert.equal(sent[0].params.parse_mode, "HTML");
+  await anon(`/hot`);
+  assert.equal(sent.length, 1, "rate-limited: one warning per chat");
+  assert.equal(bot.tagCount(CA), 0, "anonymous tag is not applied");
+  // automatic forwards stay silent
+  const n = sent.length;
+  await bot.handleUpdate({
+    update_id: 9,
+    message: {
+      message_id: 9, chat: { id: GROUP, type: "supergroup" },
+      sender_chat: { id: CHANNEL, type: "channel" },
+      is_automatic_forward: true,
+      from: { id: 777000, is_bot: true, first_name: "Telegram" },
+      text: "/help",
+    },
+  });
+  assert.equal(sent.length, n);
+});
+
+test("/events lists live and upcoming with escaped text", async () => {
+  const db = await openDb();
+  const sent = [];
+  const events = {
+    live: [{ id: "e1", title: "Raid <now>", type: "raid", start_at: Date.UTC(2026, 9, 28, 4, 0, 0), end_at: Date.UTC(2026, 9, 28, 6, 0, 0), description: "dig & duck" }],
+    upcoming: [{ id: "e2", title: "AMA", type: "ama", start_at: Date.UTC(2026, 9, 29, 0, 0, 0), end_at: Date.UTC(2026, 9, 29, 1, 0, 0), description: "q&a" }],
+    past: [],
+  };
+  const bot = new Bot({
+    db,
+    tg: async (method, params) => { sent.push({ method, params }); return { message_id: 1 }; },
+    fetchJson: async (url) => url.endsWith("/events") ? events : { pairs: [] },
+    now: () => Date.UTC(2026, 9, 28, 4, 2, 0),
+    groupId: GROUP, channelId: CHANNEL,
+    eventsUrl: "https://server.test/events",
+    voteChatId: GROUP, announceChatId: CHANNEL,
+  });
+  await bot.handleUpdate({
+    update_id: 1,
+    message: { message_id: 1, chat: { id: GROUP, type: "supergroup" }, from: { id: 1, is_bot: false, username: "u1", first_name: "U" }, text: "/events" },
+  });
+  assert.match(sent.at(-1).params.text, /LIVE/);
+  assert.match(sent.at(-1).params.text, /Raid &lt;now&gt;/);
+  assert.match(sent.at(-1).params.text, /dig &amp; duck/);
+  assert.match(sent.at(-1).params.text, /UPCOMING/);
+  const announced = await bot.announceDueEvents();
+  assert.ok(announced.sent.some((s) => s.when === "start"));
+  assert.ok(sent.some((s) => s.params.chat_id === CHANNEL && /Starting now/.test(s.params.text)));
+  assert.ok(sent.some((s) => s.params.chat_id === GROUP && /Starting now/.test(s.params.text)));
+});
+
 test("owner-only /setpost and price refresh tracks ATH and x", async () => {
   const { bot, msg, sent, prices } = await setup();
   for (let u = 1; u <= 9; u++) await msg(u, `/tag ${CA}`);
@@ -155,4 +221,41 @@ test("owner-only /setpost and price refresh tracks ATH and x", async () => {
   assert.equal(bot.apiCallers().items[0].best_x, 5);
   await msg(1, "/linkx @Caller_One");
   assert.equal(bot.apiCallers().items.find((x) => x.telegram_handle === "@user1").x_handle, "@Caller_One");
+});
+
+test("events cron: one post per milestone, no 1h post when already close, capped per run", async () => {
+  const db = await openDb();
+  const sent = [];
+  let now = Date.UTC(2026, 9, 28, 4, 0, 0);
+  const mk = (id, startMin) => ({ id, title: id, type: "raid", start_at: now + startMin * 60_000, end_at: now + (startMin + 60) * 60_000 });
+  const events = { live: [], upcoming: [mk("soon10", 10), mk("in50", 50), mk("a", 45), mk("b", 46), mk("c", 47)], past: [] };
+  const bot = new Bot({
+    db, tg: async (method, params) => { sent.push({ method, params }); return { message_id: 1 }; },
+    fetchJson: async () => events, now: () => now, groupId: GROUP, channelId: CHANNEL, eventsUrl: "https://server.test/events",
+  });
+  const r1 = await bot.announceDueEvents();
+  assert.equal(r1.sent.length, 3, "at most 3 posts per run");
+  assert.ok(!r1.sent.some((s) => s.id === "soon10"), "10 minutes out: no 'in one hour' post");
+  const r2 = await bot.announceDueEvents();
+  assert.ok(r2.sent.every((s) => !r1.sent.some((x) => x.id === s.id && x.when === s.when)), "never repeats");
+  const again = await bot.announceDueEvents();
+  assert.equal(again.sent.length, 0);
+  now += 11 * 60_000; // soon10 has started
+  events.live = [events.upcoming.shift()];
+  const r3 = await bot.announceDueEvents();
+  assert.deepEqual(r3.sent, [{ id: "soon10", when: "start" }]);
+  assert.equal((await bot.announceDueEvents()).sent.length, 0);
+  assert.equal(sent.filter((s) => /soon10/.test(s.params.text)).length, 2, "start post goes to group + channel once");
+});
+
+test("anonymous-admin /tag gets one rate-limited hint; other commands stay silent", async () => {
+  const { bot, sent } = await setup();
+  const anon = (text, id) => bot.handleUpdate({ update_id: 900 + id, message: { message_id: 900 + id, chat: { id: GROUP, type: "supergroup" }, sender_chat: { id: GROUP, type: "supergroup" }, from: { id: 1087968824, is_bot: true, username: "GroupAnonymousBot" }, text } });
+  await anon("/hot", 1);
+  assert.equal(sent.length, 0);
+  await anon(`/tag ${CA}`, 2);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].params.text, /Send as/);
+  await anon(`/tag ${CA}`, 3);
+  assert.equal(sent.length, 1);
 });

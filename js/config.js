@@ -12,6 +12,10 @@ const DEFAULT_SERVER_URL = 'https://base-trenches-server.base-trenches.workers.d
 // Power of 9 Telegram bot API (hot list, calls, callers). Source: bot/
 const DEFAULT_BOT_URL = 'https://base-trenches-bot.base-trenches.workers.dev';
 window.BT_BOT_URL = window.BT_BOT_URL || DEFAULT_BOT_URL;
+// Privy app id. Empty = hide the login button; guest + Farcaster still work as before.
+// Optional client id for the vanilla JS SDK (Dashboard → Settings → Clients).
+window.BT_PRIVY_APP_ID = window.BT_PRIVY_APP_ID || 'cmvrnxkao009s0hl58gy61ylg';
+window.BT_PRIVY_CLIENT_ID = window.BT_PRIVY_CLIENT_ID || '';
 
 window.BT_CONFIG = {
   // Multiplayer server URL (can be overridden by setting window.BT_SERVER_URL before loading)
@@ -19,6 +23,13 @@ window.BT_CONFIG = {
 
   // Telegram bot API base URL
   botUrl: window.BT_BOT_URL,
+
+  // Privy (empty app id hides LOGIN)
+  privyAppId: window.BT_PRIVY_APP_ID,
+  privyClientId: window.BT_PRIVY_CLIENT_ID,
+  privyChainId: 8453,
+  // Public Telegram bot id (@Powerof9BaseBot) for the Login Widget popup; Privy's app config wins if present.
+  telegramBotId: '9029141994',
 
   // Community links
   links: {

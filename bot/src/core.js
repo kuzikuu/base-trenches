@@ -157,6 +157,7 @@ Manifesting 589x 🔺️⏳️
 <b>/calls</b> powered-up calls and their x since the call
 <b>/me</b> your tags and calls
 <b>/linkx</b> @handle link your X so the site credits you
+<b>/events</b> upcoming and live trench events
 
 9 different trenchers tag a coin and it is POWERED UP: announced and pinned in the channel, and the first tagger is the caller. When its X post hits 5 replies, 8 reposts and 9 likes it gets PINNED.
 In DM you can also just paste a CA.
@@ -168,8 +169,10 @@ Not financial advice. Most memes go to zero.`;
 
 // ---------- the bot ----------
 export class Bot {
-  constructor({ db, tg, fetchJson, now = () => Date.now(), groupId, channelId, ownerIds = [], botUsername = "Powerof9BaseBot", log = () => {}, onWrite = () => {} }) {
-    Object.assign(this, { db, tg, fetchJson, now, groupId: Number(groupId), channelId: Number(channelId), botUsername, log, onWrite });
+  constructor({ db, tg, fetchJson, now = () => Date.now(), groupId, channelId, ownerIds = [], botUsername = "Powerof9BaseBot", log = () => {}, onWrite = () => {}, eventsUrl = "", voteChatId, announceChatId } = {}) {
+    Object.assign(this, { db, tg, fetchJson, now, groupId: Number(groupId), channelId: Number(channelId), botUsername, log, onWrite, eventsUrl });
+    this.voteChatId = Number(voteChatId != null ? voteChatId : groupId);
+    this.announceChatId = Number(announceChatId != null ? announceChatId : channelId);
     this.owners = new Set([...ownerIds].map(Number).filter(Boolean));
     migrate(db);
   }
@@ -227,21 +230,37 @@ export class Bot {
     return null; // channel_post and others: nothing to do
   }
 
+  warnSendAs(m) {
+    const chatId = m.chat && m.chat.id;
+    if (chatId == null) return null;
+    const key = "sendas_warn:" + chatId;
+    const last = Number(kvGet(this.db, key) || 0);
+    if (this.now() - last < 600000) return null;
+    kvSet(this.db, key, this.now());
+    return this.reply(m, "Tags must come from a person. Switch <b>Send as</b> to your personal account (not Anonymous Admin / the group) and try the command again.");
+  }
+
   async onMessage(m) {
     const chat = m.chat || {};
     const isPrivate = chat.type === "private";
-    const inGroup = Number(chat.id) === this.groupId;
+    const inGroup = Number(chat.id) === this.groupId || Number(chat.id) === this.voteChatId;
     if (!isPrivate && !inGroup) return null;
-    if (m.is_automatic_forward || m.sender_chat || !m.from || m.from.is_bot) return null;
+    if (m.is_automatic_forward) return null;
     const text = m.text || m.caption || "";
     let c = parseCommand(text, this.botUsername);
+    if (m.sender_chat) {
+      // Anonymous admin / "send as group or channel": only identity-bound commands get the hint.
+      if (c && !c.foreign && ["tag", "me", "linkx"].includes(c.cmd) && inGroup) return this.warnSendAs(m);
+      return null;
+    }
+    if (!m.from || m.from.is_bot) return null;
     if (c && c.foreign) return null;
     if (!c) {
       if (!isPrivate) return null;
       const t = parseTarget(text);
       c = t ? { cmd: "tag", arg: text } : { cmd: "help", arg: "" };
     }
-    const known = ["start", "help", "tag", "hot", "coin", "calls", "me", "linkx", "setpost"];
+    const known = ["start", "help", "tag", "hot", "coin", "calls", "me", "linkx", "setpost", "events"];
     if (!known.includes(c.cmd)) return isPrivate ? this.reply(m, "Unknown command. Try /help") : null;
     const rl = this.rateCheck(m.from.id);
     if (rl === "drop") return null;
@@ -256,6 +275,7 @@ export class Bot {
       case "me": return this.reply(m, this.meText(m.from.id));
       case "linkx": return this.cmdLinkX(m, c.arg);
       case "setpost": return this.cmdSetPost(m, c.arg);
+      case "events": return this.cmdEvents(m);
     }
   }
 
@@ -462,6 +482,69 @@ export class Bot {
     this.q("UPDATE coins SET x_post_url=? WHERE ca=?", url, c.ca);
     this.emit("coin", c.ca);
     return this.reply(m, `X post set for <b>$${esc(c.symbol)}</b>. Engagement checks will track 5 replies · 8 reposts · 9 likes.`);
+  }
+
+  eventLine(e) {
+    const start = e.start_at ? new Date(e.start_at).toISOString().replace('.000Z', 'Z') : '';
+    const end = e.end_at ? new Date(e.end_at).toISOString().replace('.000Z', 'Z') : '';
+    return `<b>${esc(e.title)}</b> · ${esc(String(e.type || '').replace(/_/g, ' '))}\n${esc(start)} → ${esc(end)}${e.description ? `\n${esc(e.description)}` : ''}`;
+  }
+
+  async fetchEvents() {
+    if (!this.eventsUrl) return { upcoming: [], live: [], past: [] };
+    const data = await this.fetchJson(this.eventsUrl);
+    if (!data) return { upcoming: [], live: [], past: [] };
+    return {
+      upcoming: data.upcoming || [],
+      live: data.live || [],
+      past: data.past || [],
+    };
+  }
+
+  async cmdEvents(m) {
+    const { upcoming, live } = await this.fetchEvents();
+    if (!live.length && !upcoming.length) return this.reply(m, "No events on the board. Check the <a href=\"https://base-trenches.pages.dev/#events\">EVENTS</a> page.");
+    const parts = [];
+    if (live.length) parts.push("<b>LIVE</b>\n" + live.map((e) => this.eventLine(e)).join("\n\n"));
+    if (upcoming.length) parts.push("<b>UPCOMING</b>\n" + upcoming.slice(0, 8).map((e) => this.eventLine(e)).join("\n\n"));
+    parts.push(`<a href="${LINKS.site}/#events">Calendar</a>`);
+    return this.reply(m, parts.join("\n\n"));
+  }
+
+  // Called from the 10-minute cron. Each event gets at most one "in one hour" and one
+  // "starting now" post; the kv marker is written *before* sending so overlapping runs
+  // can't double-post, and at most MAX_EVENT_POSTS go out per run.
+  async announceDueEvents() {
+    const MAX_EVENT_POSTS = 3;
+    const { upcoming, live } = await this.fetchEvents();
+    const t = this.now();
+    const hour = 3600_000, startWindow = 15 * 60_000;
+    const sent = [];
+    const seen = new Set();
+    const opts = { parse_mode: "HTML", link_preview_options: { is_disabled: true } };
+    for (const e of [...live, ...upcoming]) {
+      if (sent.length >= MAX_EVENT_POSTS) break;
+      if (!e || !e.id || seen.has(e.id)) continue;
+      seen.add(e.id);
+      const start = Number(e.start_at), end = Number(e.end_at);
+      if (!Number.isFinite(start)) continue;
+      const key1h = "event_announced:" + e.id + ":1h";
+      const keyStart = "event_announced:" + e.id + ":start";
+      // "In one hour" only when it is still 20+ minutes away; otherwise the start post covers it.
+      if (start - hour <= t && start - t >= 20 * 60_000 && !kvGet(this.db, key1h)) {
+        kvSet(this.db, key1h, t);
+        await this.safeTg("sendMessage", { chat_id: this.voteChatId, text: `In one hour: ${this.eventLine(e)}\n<a href="${LINKS.site}/#events">EVENTS</a>`, ...opts });
+        sent.push({ id: e.id, when: "1h" });
+      } else if (start <= t && t < start + startWindow && (!Number.isFinite(end) || t <= end) && !kvGet(this.db, keyStart)) {
+        kvSet(this.db, keyStart, t);
+        kvSet(this.db, key1h, kvGet(this.db, key1h) || t);
+        const text = `Starting now: ${this.eventLine(e)}\n<a href="${LINKS.site}/#events">EVENTS</a>`;
+        await this.safeTg("sendMessage", { chat_id: this.voteChatId, text, ...opts });
+        if (this.announceChatId && this.announceChatId !== this.voteChatId) await this.safeTg("sendMessage", { chat_id: this.announceChatId, text, ...opts });
+        sent.push({ id: e.id, when: "start" });
+      }
+    }
+    return { sent };
   }
 
   // ---------- cron ----------

@@ -22,7 +22,7 @@ python3 -m http.server 8080      # or: npx serve .
 
 (It has to be served over http. Opening `index.html` as `file://` blocks the `fetch` of `data/calls.json`.)
 
-Deep links: `/#hot`, `/#calls`, `/#callers`, `/#about`, `/#play`.
+Deep links: `/#hot`, `/#calls`, `/#callers`, `/#about`, `/#play`, `/#campaign`, `/#events`, `/#squad`.
 
 ### Controls
 | Action | Keyboard | Touch |
@@ -303,7 +303,7 @@ js/multiplayer.js    WebSocket client for real-time sync
 - Data is static EXAMPLE DATA. The bot, X polling and DexScreener price job still need to be built.
 - "Game rounds" per pinned coin currently means the coin appears as a labelled diamond seam in the shared game. Seeded per-coin levels (`game_round.seed`) are the next step.
 - Multiplayer anti-cheat is basic (rate limiting). XP claims are server-validated.
-- Raids / co-op squads are not yet implemented (planned next phase).
+- Squads (up to 9) and the campaign map are live; event scores only count during a published event window.
 - Social links in `links` are placeholders.
 - **iOS Safari:** does not support `navigator.vibrate`, so haptics are silent on iOS outside the Farcaster host app.
 - Not financial advice. Memes are volatile.
