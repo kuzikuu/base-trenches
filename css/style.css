@@ -418,3 +418,30 @@ html.tg-miniapp input,html.tg-miniapp textarea{-webkit-user-select:text;user-sel
 .login-methods .tg-primary{order:-1}
 .login-fc{display:flex;flex-direction:column;gap:10px;align-items:flex-start}
 .login-fc a{color:var(--blue);word-break:break-all}
+/* Account chip (replaces LOGIN), toast, account panel */
+#loginBtn{display:inline-flex;align-items:center;gap:6px;max-width:260px}
+#loginBtn.hidden{display:none}
+#loginBtn .chip-guest{opacity:.7}
+#loginBtn .chip-cta{border-left:2px solid currentColor;padding-left:6px}
+#loginBtn.signed-in{padding:3px 8px 3px 3px}
+#loginBtn .chip-av{width:20px;height:20px;flex:0 0 20px;display:inline-flex;align-items:center;justify-content:center;background:var(--blue);color:#fff;overflow:hidden;image-rendering:pixelated}
+#loginBtn .chip-av img{width:100%;height:100%;object-fit:cover}
+#loginBtn .chip-av i{font-style:normal;font-size:9px}
+#loginBtn .chip-name{overflow:hidden;text-overflow:ellipsis;max-width:110px}
+#loginBtn .chip-m{background:var(--blue);color:#fff;padding:2px 3px;font-size:7px}
+#loginBtn:hover .chip-m{background:#fff;color:var(--blue)}
+#loginBtn .chip-w{font-size:7px;opacity:.8}
+@media (max-width:560px){#loginBtn .chip-w{display:none}#loginBtn{gap:4px}#loginBtn .chip-cta{padding-left:4px}#loginBtn .chip-name{max-width:64px}}
+@media (max-width:380px){#loginBtn .chip-cta{display:none}}
+.toast{position:fixed;left:50%;top:calc(var(--top) + var(--safe-top) + 14px);transform:translate(-50%,-12px);z-index:80;background:var(--blue);color:#fff;font-family:"PS2P";font-size:9px;line-height:1.5;padding:10px 14px;border:2px solid #fff;box-shadow:4px 4px 0 var(--blue);opacity:0;pointer-events:none;transition:opacity .2s steps(3),transform .2s steps(3);max-width:min(92vw,460px);text-align:center}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+.acct-head{display:flex;gap:12px;align-items:center;margin-bottom:10px}
+.acct-avatar{width:48px;height:48px;border:2px solid var(--blue);display:flex;align-items:center;justify-content:center;background:var(--blue);color:#fff;font-family:"PS2P";overflow:hidden}
+.acct-avatar img{width:100%;height:100%;object-fit:cover}
+.acct-name{font-family:"PS2P";font-size:12px;word-break:break-all}
+.acct-sub{font-size:16px;opacity:.85}
+.acct-h{font-size:10px;margin:10px 0 6px}
+.acct-list{list-style:none;margin:0 0 10px;padding:0}
+.acct-list li{display:flex;gap:8px;align-items:center;border-bottom:1px dashed var(--blue);padding:5px 0}
+.acct-list .acct-ic{background:var(--blue);color:#fff;font-family:"PS2P";font-size:8px;padding:3px 4px;min-width:22px;text-align:center}
+.acct-list em{font-style:normal;margin-left:auto;opacity:.85;word-break:break-all}

@@ -196,7 +196,10 @@ function openPanel(id){
   }
   
   $("#panelBody").scrollTop=0;
-  $(".example").style.display=(id==="about"||id==="inventory"||id==="leaderboard"||id==="campaign"||id==="events"||id==="squad")?"none":"";
+  // Pink EXAMPLE DATA badge only on data panels (hot/calls/callers) that really fell back to data/calls.json.
+  const dataPanel=id==="hot"||id==="calls"||id==="callers";
+  const live=!!(BT.data&&BT.data.meta&&BT.data.meta.live);
+  $(".example").style.display=dataPanel&&!live?"":"none";
   $$(".paneltabs button,#menu a").forEach(b=>b.classList.toggle("on",b.dataset.nav===id));
   $("#panelWrap").classList.remove("hidden");$("#menu").classList.remove("open");
   if(location.hash!=="#"+id)history.replaceState(null,"","#"+id);
@@ -486,12 +489,37 @@ Promise.all([
 // Periodic RPG HUD update (+ online count, which onHud only refreshes when lives/mult/depth change)
 setInterval(()=>{updateRpgHud();if(Multiplayer.connected)$("#onlineCount").textContent=Multiplayer.playerCount},1000);
 
-// Privy login button (hidden when BT_PRIVY_APP_ID is empty)
+// Privy account chip (hidden when BT_PRIVY_APP_ID is empty). Guest → "GUEST · SIGN IN"; signed in → avatar, name, method, wallet.
+function toast(text,ms){
+  let t=$("#toast");
+  if(!t){t=document.createElement("div");t.id="toast";t.className="toast";t.setAttribute("role","status");t.setAttribute("aria-live","polite");document.body.appendChild(t)}
+  t.textContent=text;t.classList.remove("hidden");t.classList.add("show");
+  clearTimeout(toast._t);toast._t=setTimeout(()=>{t.classList.remove("show")},ms||3200);
+}
+function renderAccountChip(snap){
+  const b=$("#loginBtn");if(!b)return;
+  if(!snap||!snap.did){
+    b.classList.remove("acct-chip","signed-in");b.classList.add("guest-chip");
+    b.innerHTML='<span class="chip-guest">GUEST</span><span class="chip-cta">SIGN IN</span>';
+    b.setAttribute("aria-label","Guest. Sign in");b.title="Playing as guest. Sign in to keep your XP";
+    return;
+  }
+  const ic=BTPrivy.methodIcon(snap.method)||"✓",label=BTPrivy.methodLabel(snap.method)||"Privy";
+  const name=snap.displayName||"Trencher";
+  const av=snap.avatar?`<img src="${escHtml(snap.avatar)}" alt="" referrerpolicy="no-referrer">`:`<i>${escHtml(name.replace(/^@/,"").slice(0,1).toUpperCase())}</i>`;
+  b.classList.remove("guest-chip");b.classList.add("acct-chip","signed-in");
+  b.innerHTML=`<span class="chip-av">${av}</span><span class="chip-name">${escHtml(name)}</span><span class="chip-m" title="${escHtml(label)}">${escHtml(ic)}</span>${snap.wallet?`<span class="chip-w">${escHtml(shortWallet(snap.wallet))}</span>`:""}`;
+  b.setAttribute("aria-label",`Signed in as ${name} with ${label}. Open account`);b.title=`Signed in as ${name} · ${label}`;
+}
 if(typeof BTPrivy!=='undefined'&&BTPrivy.enabled()){
   $("#loginBtn").classList.remove("hidden");
+  renderAccountChip(null);
   $("#loginBtn").onclick=()=>{BTPrivy.show();Haptics.selection()};
   BTPrivy.onChange(async snap=>{
-    $("#loginBtn").textContent=snap.did?'ACCOUNT':'LOGIN';
+    renderAccountChip(snap);
+    if(snap.event==="login"&&snap.did)toast(`Logged in as ${snap.displayName||"Trencher"} · ${BTPrivy.methodLabel(snap.method)||"Privy"}`);
+    else if(snap.event==="link"&&snap.did)toast("Account linked");
+    else if(snap.event==="logout"){toast("Logged out · playing as Guest");setTimeout(()=>location.reload(),1200);return}
     const profile=RPG.getProfile();
     if(snap.did&&profile){
       profile.id=snap.did;
