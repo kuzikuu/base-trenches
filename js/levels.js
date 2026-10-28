@@ -26,7 +26,10 @@ const THEMES = [
   { id: 'ember', name: 'Hellfire Corner', campaign: 'Hellfire', accent: '#ff2bd6', accent2: '#ffd400', ink: '#0b1a8f', bed: '#0a2fd1', pale: '#ffd6f6', dens: [0.22, 0.34, 0.46], invert: false, props: 'ember',
     title: 'Firewalker', boss: 'The Furnace', relic: 'molten medal', blurb: 'Hot rock and burning seams. Everything down here bites.' },
   { id: 'core', name: 'The Base Core', campaign: 'Onchain', accent: '#16e0ff', accent2: '#22e36b', ink: '#ffffff', bed: '#0b1a8f', pale: '#3d74ff', dens: [0.55, 0.65, 0.75], invert: true, props: 'circuit',
-    title: 'Core Runner', boss: 'The Sequencer', relic: 'genesis block', blurb: 'Blue all the way down. The trench runs onchain.' }
+    title: 'Core Runner', boss: 'The Sequencer', relic: 'genesis block', blurb: 'Blue all the way down. The trench runs onchain.' },
+  // Sinai front, 1916: a desert level with a nod to a certain spice-and-sandworm epic.
+  { id: 'sands', name: 'The Dust Sea', campaign: 'Desert Column', accent: '#ffd400', accent2: '#c9a27a', ink: '#0b1a8f', bed: '#0a2fd1', pale: '#fff3b8', dens: [0.1, 0.18, 0.28], invert: false, props: 'dune',
+    title: 'Sand Rider', boss: 'Sandmaw', relic: 'spice tin', blurb: 'Sinai sand all the way down. Walk without rhythm.' }
 ];
 
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
@@ -146,5 +149,127 @@ function levelChapter(level) {
   };
 }
 
-window.BTLevels = { LEVEL_DEPTH_M, MAX_LEVEL, THEMES, roman, clampLevel, levelForDepth, levelTopDepth, levelFloorDepth, themeFor, difficulty, tileHp, levelGear, levelChapterId, parseLevelChapterId, levelChapter };
+// ---------- crawlers + the Sandmaw boss (client sim, server-validated rewards) ----------
+// Every theme has two crawlers: a primary (always) and a secondary (deeper in the level).
+// Names and art are original; the taglines are affectionate nods to well-known films and games.
+const CRAWLERS = {
+  trenches: [
+    { id: 'mudling', name: 'Mudling', kind: 'walker', body: '#8a5a2b', eye: '#ffd400', tag: 'NEVER FEED AFTER MIDNIGHT' },
+    { id: 'wireskitter', name: 'Wire Skitter', kind: 'hopper', body: '#0b1a8f', eye: '#ff2bd6', tag: 'WANT TO KNOW MORE?' }
+  ],
+  mines: [
+    { id: 'hissbug', name: 'Hissbug', kind: 'fuser', body: '#22e36b', eye: '#0b1a8f', tag: 'SSSSSS...' },
+    { id: 'lampmole', name: 'Lamp Mole', kind: 'walker', body: '#c9a27a', eye: '#ffd400', tag: 'YOU SHALL NOT DIG' }
+  ],
+  chalk: [
+    { id: 'paleclinger', name: 'Pale Clinger', kind: 'dropper', body: '#7fa0ff', eye: '#ff2bd6', tag: 'IN THE CHALK NO ONE HEARS YOU DIG' },
+    { id: 'bonechitter', name: 'Bone Chitter', kind: 'hopper', body: '#e6ecff', eye: '#0052ff', tag: "THEY'RE HERE" }
+  ],
+  flooded: [
+    { id: 'gillnipper', name: 'Gill Nipper', kind: 'hopper', body: '#16e0ff', eye: '#0b1a8f', tag: 'NEED A BIGGER SHOVEL' },
+    { id: 'pumpleech', name: 'Pump Leech', kind: 'walker', body: '#0a2fd1', eye: '#16e0ff', tag: 'STAY OUT OF THE WATER' }
+  ],
+  ember: [
+    { id: 'cinderimp', name: 'Cinder Imp', kind: 'spitter', body: '#ff2bd6', eye: '#ffd400', tag: 'RIP AND DIG' },
+    { id: 'magmatick', name: 'Magma Tick', kind: 'walker', body: '#ffd400', eye: '#ff2bd6', tag: 'THE FLOOR IS LAVA' }
+  ],
+  core: [
+    { id: 'glitchmite', name: 'Glitch Mite', kind: 'blinker', body: '#22e36b', eye: '#ffffff', tag: 'DEJA VU? A GLITCH' },
+    { id: 'packetcrawler', name: 'Packet Crawler', kind: 'walker', body: '#16e0ff', eye: '#22e36b', tag: 'ENTER THE GRID' }
+  ],
+  sands: [
+    { id: 'spicemite', name: 'Spice Mite', kind: 'swarmer', body: '#ffd400', eye: '#ff2bd6', tag: 'THE DIRT MUST FLOW' },
+    { id: 'wormling', name: 'Wormling', kind: 'burrower', body: '#c9a27a', eye: '#0b1a8f', tag: 'WALK WITHOUT RHYTHM' }
+  ]
+};
+const CRAWLER_KINDS = ['walker', 'hopper', 'fuser', 'dropper', 'spitter', 'blinker', 'swarmer', 'burrower'];
+const CRAWLER_MIN_DEPTH_M = 12;   // nothing crawls in the first few meters under the trench
+const BOSS_ZONE_M = 60;           // the Sandmaw wakes this far above a level's floor
+const BOSS_MIN_FIGHT_MS = 15_000; // server: a kill sooner than this after the spawn is rejected
+const TELEPORT_COOLDOWN_S = 90;
+const ELEVATOR_SHAFT_STEP_M = 100; // levels locked: shaft stops every 100 m of level 1
+const ELEVATOR_MAX_STOPS = 12;
+
+// The "tier" crawlers and the boss scale with. Levels unlocked: the world level. Locked
+// (prod): level 1 is endless, so the tier grows every LEVEL_DEPTH_M meters of depth instead
+// (difficulty only; no themes, chapters or levels 2+ are revealed).
+function crawlerTier(depth) {
+  const d = Math.max(0, Math.floor(Number(depth) || 0));
+  return clampLevel(Math.floor(d / LEVEL_DEPTH_M) + 1);
+}
+
+function crawlersFor(level) {
+  return CRAWLERS[themeFor(level).id] || CRAWLERS.trenches;
+}
+
+// Crawler stats for a tier and how far into its level you are (0..LEVEL_DEPTH_M-1).
+// Level 1 at the top is gentle; everything climbs without a cap.
+function crawlerStats(tier, levelDepth = 0) {
+  const L = clampLevel(tier);
+  const f = Math.max(0, Math.min(1, (Number(levelDepth) || 0) / LEVEL_DEPTH_M));
+  const t = (L - 1) + f;                     // smooth: 0 at the top of level 1
+  return {
+    hp: Math.max(1, Math.round(1 + 1.2 * t)),
+    damage: 1 + Math.floor(t / 3),
+    speed: Math.min(84, Math.round(22 + 5 * t)),
+    maxAlive: Math.min(12, 2 + Math.floor(t * 1.3)),
+    spawnEvery: Math.max(1.1, 6.5 - 0.7 * t),  // seconds between spawn attempts
+    secondaryChance: f < 0.3 && L === 1 ? 0 : Math.min(0.5, 0.2 + 0.05 * t)
+  };
+}
+
+function bossStats(tier) {
+  const L = clampLevel(tier);
+  return {
+    hp: Math.round(14 + 7 * (L - 1)),
+    damage: 1 + Math.floor((L - 1) / 3),
+    segments: Math.min(14, 7 + Math.floor((L - 1) / 2)),
+    speed: Math.min(150, 70 + 8 * (L - 1)),
+    lungeEvery: Math.max(1.6, 3.2 - 0.15 * (L - 1)),
+    exposed: Math.max(1.1, 1.9 - 0.08 * (L - 1)),
+    name: 'SANDMAW'
+  };
+}
+
+// Meters into the current level band (works locked or unlocked).
+function levelDepthOf(depth) {
+  const d = Math.max(0, Math.floor(Number(depth) || 0));
+  return d % LEVEL_DEPTH_M;
+}
+function bossBand(depth) { return Math.floor(Math.max(0, Math.floor(Number(depth) || 0)) / LEVEL_DEPTH_M) + 1; }
+// True near the bottom of a level band, where the Sandmaw guards the floor. `slack` widens it (server).
+function inBossZone(depth, slack = 0) {
+  return levelDepthOf(depth) >= LEVEL_DEPTH_M - 1 - BOSS_ZONE_M - slack;
+}
+
+// Server-side XP for crawler kills and the boss, by verified world level.
+function killXp(level) { return Math.min(8, 2 + Math.floor((clampLevel(level) - 1) / 2)); }
+function bossXp(level) { return Math.min(240, 60 + 20 * (clampLevel(level) - 1)); }
+
+// Elevator stops for a profile. Unlocked: the top of every level you have reached.
+// Locked: level 1 only, the surface plus a shaft stop every 100 m down to your best depth.
+function elevatorStops({ bestDepth = 0, maxLevel = 1, unlocked = false } = {}) {
+  const best = Math.max(0, Math.floor(Number(bestDepth) || 0));
+  const stops = [{ level: 1, depth: 0, label: 'SURFACE' }];
+  if (unlocked) {
+    const top = Math.max(clampLevel(maxLevel), levelForDepth(best, true));
+    for (let L = 2; L <= top; L++) {
+      const t = themeFor(L);
+      stops.push({ level: L, depth: levelTopDepth(L) + 2, label: 'LEVEL ' + L + ' · ' + t.displayName.toUpperCase() });
+    }
+  } else {
+    const shaft = [];
+    for (let d = ELEVATOR_SHAFT_STEP_M; d <= best; d += ELEVATOR_SHAFT_STEP_M) shaft.push({ level: 1, depth: d, label: 'SHAFT ' + d + 'M' });
+    stops.push(...shaft);
+  }
+  return stops.length > ELEVATOR_MAX_STOPS ? [stops[0], ...stops.slice(-(ELEVATOR_MAX_STOPS - 1))] : stops;
+}
+
+function validElevatorStop(depth, ctx = {}) {
+  const d = Math.floor(Number(depth));
+  if (!Number.isFinite(d)) return null;
+  return elevatorStops(ctx).find(s => s.depth === d) || null;
+}
+
+window.BTLevels = { LEVEL_DEPTH_M, MAX_LEVEL, THEMES, roman, clampLevel, levelForDepth, levelTopDepth, levelFloorDepth, themeFor, difficulty, tileHp, levelGear, levelChapterId, parseLevelChapterId, levelChapter, CRAWLERS, CRAWLER_KINDS, CRAWLER_MIN_DEPTH_M, BOSS_ZONE_M, BOSS_MIN_FIGHT_MS, TELEPORT_COOLDOWN_S, ELEVATOR_SHAFT_STEP_M, ELEVATOR_MAX_STOPS, crawlerTier, crawlersFor, crawlerStats, bossStats, levelDepthOf, bossBand, inBossZone, killXp, bossXp, elevatorStops, validElevatorStop };
 })();

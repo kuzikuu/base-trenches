@@ -15,7 +15,8 @@ import {
   DEPTH_STEP_M,
   levelFromXp,
   SERVER_XP_KINDS,
-  REWARD_WINDOW_MS
+  REWARD_WINDOW_MS,
+  noteBossSpawn
 } from './lib/xp.js';
 import {
   normalizeProgress,
@@ -40,9 +41,9 @@ import {
   publicRecruit
 } from './lib/recruits.js';
 import { parseGeo, geoHeader, aggregateGeo } from './lib/geo.js';
-import { levelForDepth, LEVEL_DEPTH_M, MAX_LEVEL } from './lib/levels.js';
+import { levelForDepth, LEVEL_DEPTH_M, MAX_LEVEL, killXp, bossXp, bossBand, inBossZone, elevatorStops, validElevatorStop } from './lib/levels.js';
 import { normalizeSkills, learn as learnSkill, validateSkills, skillPoints, spentPoints, RESPEC_COOLDOWN_MS } from './lib/skills.js';
-import { sanitizeSave, sanitizeEquipped, normalizeMeta, noteCredit, emptyMeta, deathCheckpoint, SAVE_MIN_GAP_MS } from './lib/save.js';
+import { sanitizeSave, sanitizeEquipped, normalizeMeta, noteCredit, emptyMeta, deathCheckpoint, elevatorStart, SAVE_MIN_GAP_MS } from './lib/save.js';
 
 const CORS_ORIGINS = [
   'https://powerof9base.com',
@@ -210,6 +211,8 @@ export class TrenchRoom {
     this.xpWindows = new Map();
     this.recentDigs = new Map();
     this.raidSurvives = new Map(); // sessionId -> barrages survived since the last boss raid
+    this.bossSpawns = new Map();   // sessionId -> { band, t } last Sandmaw spawn the room saw
+    this.bossSlain = new Map();    // sessionId -> Set(bands) already paid this session
     this.lastBroadcast = 0;
     this.seed = null;
     // NPC recruits live only in memory and only while at least one human is connected.
@@ -468,7 +471,7 @@ export class TrenchRoom {
 
   async webSocketClose(ws, code, reason) {
     const attachment = ws.deserializeAttachment() || {};
-    if (attachment.sessionId) { this.xpWindows.delete(attachment.sessionId); this.raidSurvives.delete(attachment.sessionId); }
+    if (attachment.sessionId) { this.xpWindows.delete(attachment.sessionId); this.raidSurvives.delete(attachment.sessionId); this.bossSpawns.delete(attachment.sessionId); this.bossSlain.delete(attachment.sessionId); }
     try { ws.close(code === 1005 ? 1000 : code, reason); } catch (e) {}
     if (attachment.playerId) {
       const playerCount = this.getActivePlayers(ws).length;
@@ -569,6 +572,8 @@ export class TrenchRoom {
   scoreCtx(attachment, now) {
     let win = this.xpWindows.get(attachment.sessionId);
     if (!win) { win = createXpWindow(); this.xpWindows.set(attachment.sessionId, win); }
+    let slain = this.bossSlain.get(attachment.sessionId);
+    if (!slain) { slain = new Set(); this.bossSlain.set(attachment.sessionId, slain); }
     return {
       dugSet: this.dugBlocks,
       recentDigs: this.recentDigs,
@@ -576,6 +581,10 @@ export class TrenchRoom {
       playerX: attachment.x,
       playerY: attachment.y,
       lastDepthAwarded: attachment.lastDepthAwarded || 0,
+      // world level of the room's last known position (crawler / boss XP scale with it)
+      level: levelForDepth(depthFromY(attachment.y, TRENCH_FLOOR_TILE, TILE_SIZE), levelsUnlocked(this.env)),
+      boss: this.bossSpawns.get(attachment.sessionId) || null,
+      slain,
       now,
       window: win
     };
@@ -624,6 +633,13 @@ export class TrenchRoom {
     if (!attachment.playerId) return;
     const kind = data.kind;
     if (kind === 'dig') return this.handleDig(ws, data, attachment);
+    if (kind === 'bossSpawn') {
+      // No XP: just start the fight clock if the room agrees the trencher is in a boss zone.
+      const sp = noteBossSpawn({ playerY: attachment.y, now: Date.now() });
+      const prev = this.bossSpawns.get(attachment.sessionId);
+      if (sp && !(prev && prev.band === sp.band)) this.bossSpawns.set(attachment.sessionId, sp);
+      return;
+    }
     await this.creditEvent(ws, attachment, data, Date.now());
   }
 
@@ -659,6 +675,7 @@ export class TrenchRoom {
         xp: result.xp,
         depth,
         eventKind: event.kind,
+        band: result.band || undefined,
         chapterId: typeof event.chapterId === 'string' ? event.chapterId.slice(0, 40) : undefined,
         missionId: typeof event.missionId === 'string' ? event.missionId.slice(0, 40) : undefined,
         name: attachment.name
@@ -792,6 +809,7 @@ export class Profiles {
         "ALTER TABLE profiles ADD COLUMN skills TEXT DEFAULT '{}'",
         'ALTER TABLE profiles ADD COLUMN skills_reset_at INTEGER',
         'ALTER TABLE profiles ADD COLUMN max_level INTEGER DEFAULT 1',
+        "ALTER TABLE profiles ADD COLUMN bosses TEXT DEFAULT '{}'",
         'CREATE INDEX IF NOT EXISTS idx_max_level ON profiles(max_level DESC, best_depth DESC)'
       ]) {
         try { this.sql.exec(col); } catch (e) {}
@@ -829,6 +847,10 @@ export class Profiles {
     if (path === '/skills' && request.method === 'POST') {
       return this.updateSkills(await request.json());
     }
+    if (path === '/elevator') {
+      if (request.method === 'GET') return this.getElevator(url.searchParams.get('id'));
+      if (request.method === 'POST') return this.rideElevator(await request.json());
+    }
     if (path === '/squad') {
       if (request.method === 'GET') {
         const code = url.searchParams.get('code');
@@ -860,6 +882,8 @@ export class Profiles {
       skill_points: skillPoints(row.level, row.max_level),
       skill_points_free: Math.max(0, skillPoints(row.level, row.max_level) - spentPoints(skills)),
       has_save: !!save_state,
+      bosses: (() => { try { return JSON.parse(row.bosses || '{}') || {}; } catch (e) { return {}; } })(),
+      elevator: elevatorStops({ bestDepth: row.best_depth || 0, maxLevel: row.max_level || 1, unlocked: levelsUnlocked(this.env) }),
       inventory: JSON.parse(row.inventory || '[]'),
       equipped: JSON.parse(row.equipped || '{}'),
       titles: JSON.parse(row.titles || '[]'),
@@ -919,7 +943,7 @@ export class Profiles {
     return Response.json({ success: true, profile: this.rowToProfile(fresh[0]) });
   }
 
-  async addXp({ profileId, xp, depth, eventKind, chapterId, missionId, name }) {
+  async addXp({ profileId, xp, depth, eventKind, chapterId, missionId, name, band }) {
     const results = this.sql.exec('SELECT * FROM profiles WHERE id = ?', profileId).toArray();
     if (!results.length) return Response.json({ success: false });
     const row = results[0];
@@ -933,6 +957,13 @@ export class Profiles {
     // World level of this event: from the (capped) position, never above the deepest verified level.
     const atLevel = levelForDepth(Math.min(here, newBestDepth), unlocked);
     const maxLevel = Math.max(row.max_level || 1, levelForDepth(newBestDepth, unlocked));
+    // Crawler / boss XP never exceeds what the deepest *verified* level pays.
+    if (eventKind === 'kill') add = Math.min(add, killXp(atLevel));
+    if (eventKind === 'bossKill') {
+      // The boss only counts where this profile's *verified* depth puts it inside a boss zone.
+      const at = Math.min(here, newBestDepth);
+      add = inBossZone(at, 12) && (!band || bossBand(at) === Math.floor(Number(band))) ? Math.min(add, bossXp(atLevel)) : 0;
+    }
     let campaign = normalizeProgress(JSON.parse(row.campaign || '{}'));
     if (unlocked) campaign = noteLevel(campaign, maxLevel);
     let titles = JSON.parse(row.titles || '[]');
@@ -967,7 +998,18 @@ export class Profiles {
     const newLevel = levelFromXp(newXp);
 
     let gearDrop = null;
-    if (Math.random() < 0.02 && depth > 10 && add > 0) {
+    // First Sandmaw kill in each level band: a guaranteed gear drop (repeat kills pay XP only).
+    let bosses = {};
+    try { bosses = JSON.parse(row.bosses || '{}') || {}; } catch (e) { bosses = {}; }
+    let bossFirst = false;
+    if (eventKind === 'bossKill' && add > 0) {
+      const at = Math.min(here, newBestDepth);
+      const b = String(bossBand(at));
+      bossFirst = !bosses[b];
+      bosses[b] = (bosses[b] || 0) + 1;
+      if (bossFirst) { gearDrop = generateGearDrop(Math.max(at, 300)); inventory.push(gearDrop); }
+      this.sql.exec('UPDATE profiles SET bosses = ? WHERE id = ?', JSON.stringify(bosses), profileId);
+    } else if (Math.random() < 0.02 && depth > 10 && add > 0) {
       gearDrop = generateGearDrop(depth);
       inventory.push(gearDrop);
     }
@@ -1007,6 +1049,7 @@ export class Profiles {
       titles,
       maxLevel,
       bestDepth: newBestDepth,
+      bossFirst,
       skillPoints: skillPoints(newLevel, maxLevel)
     });
   }
@@ -1114,6 +1157,33 @@ export class Profiles {
         deaths = COALESCE(deaths, 0) + ?, updated_at = ? WHERE id = ?
     `, save ? JSON.stringify(save) : null, now, JSON.stringify(emptyMeta(now)), playAdd, died ? 1 : 0, now, profileId);
     return Response.json({ ok: true, save, clamped: out.clamped, died, playTime: (row.play_time || 0) + playAdd });
+  }
+
+  // Elevator: stops come from what this profile has verified (best depth, deepest level).
+  async getElevator(id) {
+    const rows = this.sql.exec('SELECT best_depth, max_level, migrated_to FROM profiles WHERE id = ?', id).toArray();
+    const unlocked = levelsUnlocked(this.env);
+    if (!rows.length || rows[0].migrated_to) return Response.json({ ok: true, stops: elevatorStops({ unlocked }) });
+    return Response.json({ ok: true, stops: elevatorStops({ bestDepth: rows[0].best_depth || 0, maxLevel: rows[0].max_level || 1, unlocked }) });
+  }
+
+  // Ride from the menu: a fresh run at the chosen stop, written as the save (like a checkpoint).
+  async rideElevator({ profileId, depth, sector }) {
+    if (!profileId || String(profileId).startsWith('guest:')) return Response.json({ ok: false, error: 'login_required' }, { status: 403 });
+    const rows = this.sql.exec('SELECT * FROM profiles WHERE id = ?', profileId).toArray();
+    if (!rows.length) return Response.json({ ok: false, error: 'no_profile' }, { status: 404 });
+    const row = rows[0];
+    if (row.migrated_to) return Response.json({ ok: false, error: 'migrated' }, { status: 409 });
+    const unlocked = levelsUnlocked(this.env);
+    const stop = validElevatorStop(depth, { bestDepth: row.best_depth || 0, maxLevel: row.max_level || 1, unlocked });
+    if (!stop) return Response.json({ ok: false, error: 'bad_stop' }, { status: 400 });
+    const now = Date.now();
+    let prev = null;
+    try { prev = row.save_state ? JSON.parse(row.save_state) : null; } catch (e) {}
+    const save = elevatorStart(stop, { now, levelsUnlocked: unlocked, seed: prev && prev.seed != null ? prev.seed : null, sector: typeof sector === 'string' ? sector : (prev && prev.sector) || null });
+    this.sql.exec(`UPDATE profiles SET save_state = ?, save_at = ?, save_meta = ?, updated_at = ? WHERE id = ?`,
+      JSON.stringify(save), now, JSON.stringify(emptyMeta(now)), now, profileId);
+    return Response.json({ ok: true, save, stop });
   }
 
   async updateSkills({ profileId, action, skill }) {
@@ -1539,6 +1609,27 @@ async function handleRequest(request, env, ctx) {
       const r = await profiles.fetch(new Request('http://internal/save', {
         method: 'POST',
         body: JSON.stringify({ profileId: v.id, input: snapshot, serverPos: null, sector: null })
+      }));
+      return json(await r.json(), r.status, origin);
+    }
+    return json({ error: 'method' }, 405, origin);
+  }
+
+  // Elevator: GET = your stops, POST {depth} = start a run at that stop (saved). Logged-in only.
+  if (path === '/api/elevator') {
+    const v = await authFromRequest(request, env);
+    if (!v) return json({ ok: false, error: 'login_required', stops: elevatorStops({ unlocked: levelsUnlocked(env) }) }, 401, origin);
+    const profiles = profilesStub(env);
+    if (request.method === 'GET') {
+      const r = await profiles.fetch(new Request(`http://internal/elevator?id=${encodeURIComponent(v.id)}`));
+      return json(await r.json(), r.status, origin);
+    }
+    if (request.method === 'POST') {
+      let body;
+      try { body = await request.json(); } catch { return json({ ok: false, error: 'Invalid JSON' }, 400, origin); }
+      const r = await profiles.fetch(new Request('http://internal/elevator', {
+        method: 'POST',
+        body: JSON.stringify({ profileId: v.id, depth: Math.floor(Number(body && body.depth)), sector: typeof (body && body.sector) === 'string' ? body.sector.slice(0, 12) : null })
       }));
       return json(await r.json(), r.status, origin);
     }

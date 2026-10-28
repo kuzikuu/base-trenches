@@ -168,3 +168,25 @@ export function deathCheckpoint(prev, ctx = {}) {
 }
 
 export { LEVEL_DEPTH_M };
+
+// Elevator ride from the menu: a fresh run at a validated stop (see levels.elevatorStops).
+// Same shape as a death checkpoint: full lives, no gems, x1 multiplier, depth bonuses start below the stop.
+export const ELEVATOR_X = 20 * TS + 2;
+export function elevatorStart(stop, ctx = {}) {
+  const now = ctx.now || Date.now();
+  const depth = Math.max(0, int(stop && stop.depth));
+  const level = levelForDepth(depth, !!ctx.levelsUnlocked);
+  return {
+    v: SAVE_VERSION,
+    runId: 'el-' + now.toString(36),
+    checkpoint: true,
+    elevator: true,
+    x: ELEVATOR_X, y: yForDepth(depth), depth,
+    level,
+    lives: MAX_LIVES, gems: 0, powerGems: 0, maxDepth: depth, mult: 1, depthBonusAt: (Math.floor(depth / 25) + 1) * 25,
+    runTime: 0, secondWindUsed: false,
+    seed: ctx.seed != null && Number.isFinite(Number(ctx.seed)) ? int(ctx.seed) : null,
+    sector: typeof ctx.sector === 'string' && SECTOR_RE.test(ctx.sector) ? ctx.sector : null,
+    savedAt: now
+  };
+}

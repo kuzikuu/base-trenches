@@ -1,5 +1,6 @@
 // Server-authoritative XP: score validated events with per-kind and per-minute caps.
 // Used by TrenchRoom and by node tests. No Durable Object APIs here.
+import { killXp, bossXp, inBossZone, bossBand, CRAWLER_MIN_DEPTH_M, BOSS_MIN_FIGHT_MS } from './levels.js';
 
 export const XP = {
   DIG: 1,
@@ -26,6 +27,8 @@ export const CAPS_PER_MINUTE = {
   diamond: 30,
   power: 15,
   depth: 20,
+  kill: 30,
+  bossKill: 2,
   xp: 250
 };
 
@@ -35,8 +38,10 @@ export const DEPTH_STEP_M = 5;
 export const TRENCH_FLOOR_TILE = 14; // S+2 in the client (S=12)
 
 export const EVENT_KINDS = new Set([
-  'dig', 'dodge', 'hit', 'survive', 'relic', 'mission', 'boss', 'diamond', 'power', 'depth'
+  'dig', 'dodge', 'hit', 'survive', 'relic', 'mission', 'boss', 'diamond', 'power', 'depth', 'kill', 'bossKill'
 ]);
+// Crawler kills must be near where the room last saw the trencher.
+export const KILL_MAX_DIST_TILES = 7;
 
 // XP for these comes from the server-side campaign definition, and only when
 // Profiles actually completes the mission. The room only rate-limits them.
@@ -71,6 +76,9 @@ export function xpForKind(kind, extra = {}) {
     case 'hit': return XP.HIT;
     case 'survive': return XP.SURVIVE;
     case 'relic': return XP.RELIC;
+    // Level comes from the room's verified position (and Profiles re-caps it by best depth).
+    case 'kill': return killXp(extra.level || 1);
+    case 'bossKill': return bossXp(extra.level || 1);
     // Never trust a client-supplied amount: mission/boss XP is awarded by Profiles.
     case 'mission': return 0;
     case 'boss': return 0;
@@ -105,6 +113,43 @@ export function validateDig({ dugSet, x, y, playerX, playerY, tileSize = TILE_SI
     }
   }
   return { ok: true, x: bx, y: by, key };
+}
+
+/** A crawler kill: finite tile near the trencher, below the crawler line. */
+export function validateKill({ x, y, playerX, playerY, tileSize = TILE_SIZE } = {}) {
+  const bx = Number(x), by = Number(y);
+  if (!Number.isFinite(bx) || !Number.isFinite(by)) return { ok: false, reason: 'bad_tile' };
+  if (playerX == null || playerY == null || !Number.isFinite(Number(playerX)) || !Number.isFinite(Number(playerY))) return { ok: false, reason: 'no_position' };
+  const depth = depthFromY(playerY, TRENCH_FLOOR_TILE, tileSize);
+  if (depth < CRAWLER_MIN_DEPTH_M - 2) return { ok: false, reason: 'too_shallow' };
+  const dx = Number(playerX) / tileSize - (Math.floor(bx) + 0.5);
+  const dy = Number(playerY) / tileSize - (Math.floor(by) + 0.5);
+  if (dx * dx + dy * dy > KILL_MAX_DIST_TILES * KILL_MAX_DIST_TILES) return { ok: false, reason: 'too_far' };
+  return { ok: true, depth };
+}
+
+/**
+ * The Sandmaw: the room must have seen this session's boss spawn in the same band's boss zone
+ * at least BOSS_MIN_FIGHT_MS ago, the trencher must still be in the zone, once per band per session.
+ * boss: { band, t } | null ; slain: Set of bands already paid this session.
+ */
+export function validateBossKill({ boss, slain, playerY, now = Date.now() } = {}) {
+  if (playerY == null || !Number.isFinite(Number(playerY))) return { ok: false, reason: 'no_position' };
+  const depth = depthFromY(playerY);
+  if (!inBossZone(depth, 12)) return { ok: false, reason: 'not_in_zone' };
+  const band = bossBand(depth);
+  if (!boss || boss.band !== band) return { ok: false, reason: 'no_spawn' };
+  if (now - boss.t < BOSS_MIN_FIGHT_MS) return { ok: false, reason: 'too_fast' };
+  if (slain && slain.has(band)) return { ok: false, reason: 'already_slain' };
+  return { ok: true, band, depth };
+}
+
+/** Boss spawn notice: only counts inside a boss zone. */
+export function noteBossSpawn({ playerY, now = Date.now() } = {}) {
+  if (playerY == null || !Number.isFinite(Number(playerY))) return null;
+  const depth = depthFromY(playerY);
+  if (!inBossZone(depth, 4)) return null;
+  return { band: bossBand(depth), t: now };
 }
 
 export function validateDepth({ depth, lastAwarded = 0, playerY } = {}) {
@@ -148,7 +193,8 @@ export function applyEvent(win, event, now = Date.now()) {
   }
   const xp = Math.max(0, Math.floor(xpForKind(kind, event)));
   if (!xp && kind !== 'hit' && !SERVER_XP_KINDS.has(kind)) return { ok: false, reason: 'no_xp', xp: 0, window: win };
-  if (win.xp + xp > CAPS_PER_MINUTE.xp) {
+  // The boss pays out in one lump (validated separately), so it is not held to the per-minute XP cap.
+  if (kind !== 'bossKill' && win.xp + xp > CAPS_PER_MINUTE.xp) {
     return { ok: false, reason: 'rate_xp', xp: 0, window: win };
   }
   win.events.push({ t: now, kind, xp });
@@ -180,6 +226,18 @@ export function scoreValidatedEvent(event, ctx = {}) {
       tileSize: ctx.tileSize
     });
     if (!dig.ok) return { ok: false, reason: dig.reason, xp: 0, window: ctx.window };
+  }
+  if (kind === 'kill') {
+    const k = validateKill({ x: event.x, y: event.y, playerX: ctx.playerX, playerY: ctx.playerY, tileSize: ctx.tileSize });
+    if (!k.ok) return { ok: false, reason: k.reason, xp: 0, window: ctx.window };
+    return applyEvent(ctx.window, { kind, level: ctx.level || 1 }, now);
+  }
+  if (kind === 'bossKill') {
+    const k = validateBossKill({ boss: ctx.boss, slain: ctx.slain, playerY: ctx.playerY, now });
+    if (!k.ok) return { ok: false, reason: k.reason, xp: 0, window: ctx.window };
+    const out = applyEvent(ctx.window, { kind, level: ctx.level || 1 }, now);
+    if (out.ok) { out.band = k.band; if (ctx.slain) ctx.slain.add(k.band); }
+    return out;
   }
   if (kind === 'depth') {
     const d = validateDepth({
