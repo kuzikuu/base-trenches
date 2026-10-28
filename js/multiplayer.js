@@ -10,36 +10,55 @@ let playerId = null;
 let players = new Map(); // id -> player data
 let dugBlocks = new Map(); // "x,y" -> timestamp
 let playerCount = 0;
+let worldSeed = null;
+let connecting = false;
 let lastStateSent = 0;
 let pendingXp = 0;
 let chatCallbacks = [];
 let statusCallbacks = [];
 
-function getWsUrl() {
+async function getWsUrl(profile) {
   const base = BT_CONFIG.serverUrl.replace(/^http/, 'ws');
-  return `${base}/api/ws?room=main`;
+  const q = new URLSearchParams({ room: 'main' });
+  // Credentials let the server credit XP to this profile (browsers can't set WS headers)
+  if (profile && profile.fid) {
+    const token = await RPG.getAuthToken();
+    if (token) q.set('token', token);
+  } else if (profile && profile.id) {
+    q.set('profileId', profile.id);
+    q.set('secret', RPG.getGuestSecret());
+  }
+  return `${base}/api/ws?${q}`;
 }
 
-function connect(profile) {
-  if (ws && ws.readyState === WebSocket.OPEN) return;
+async function connect(profile) {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   
+  if (connecting) return;
+  let sock;
   try {
-    ws = new WebSocket(getWsUrl());
+    connecting = true;
+    const url = await getWsUrl(profile);
+    sock = ws = new WebSocket(url);
   } catch (e) {
+    connecting = false;
     console.warn('[MP] WebSocket connection failed:', e);
     notifyStatus('offline');
     scheduleReconnect();
     return;
   }
+  connecting = false;
   
-  ws.onopen = () => {
+  // Handlers ignore events from a socket that has since been replaced (disconnect()/reconnect)
+  sock.onopen = () => {
+    if (sock !== ws) return;
     console.log('[MP] Connected');
     connected = true;
     reconnectAttempts = 0;
     notifyStatus('connected');
     
     // Send join message
-    ws.send(JSON.stringify({
+    sock.send(JSON.stringify({
       type: 'join',
       playerId: profile.id,
       name: profile.name,
@@ -49,7 +68,8 @@ function connect(profile) {
     }));
   };
   
-  ws.onmessage = (event) => {
+  sock.onmessage = (event) => {
+    if (sock !== ws) return;
     try {
       const data = JSON.parse(event.data);
       handleMessage(data);
@@ -58,14 +78,16 @@ function connect(profile) {
     }
   };
   
-  ws.onclose = () => {
+  sock.onclose = () => {
+    if (sock !== ws) return;
     console.log('[MP] Disconnected');
     connected = false;
     notifyStatus('disconnected');
     scheduleReconnect();
   };
   
-  ws.onerror = (e) => {
+  sock.onerror = (e) => {
+    if (sock !== ws) return;
     console.warn('[MP] WebSocket error');
     notifyStatus('error');
   };
@@ -77,8 +99,9 @@ function disconnect() {
     reconnectTimeout = null;
   }
   if (ws) {
-    ws.close();
-    ws = null;
+    const old = ws;
+    ws = null; // detach first so the old socket's onclose doesn't flip state or auto-reconnect
+    old.close();
   }
   connected = false;
   players.clear();
@@ -113,10 +136,19 @@ function handleMessage(data) {
     case 'init':
       playerId = data.playerId;
       playerCount = data.playerCount;
+      players.clear();
+      if (typeof data.seed === 'number' && data.seed !== worldSeed) {
+        worldSeed = data.seed;
+        if (typeof Game !== 'undefined' && Game.setSeed) Game.setSeed(worldSeed);
+      }
       data.players.forEach(p => {
         if (p.id !== playerId) players.set(p.id, p);
       });
-      data.dugBlocks.forEach(([key, ts]) => dugBlocks.set(key, ts));
+      data.dugBlocks.forEach(([key, ts]) => {
+        dugBlocks.set(key, ts);
+        const [bx, by] = key.split(',').map(Number);
+        if (typeof Game !== 'undefined' && Game.applyRemoteDig) Game.applyRemoteDig(bx, by);
+      });
       break;
       
     case 'join':
@@ -128,13 +160,13 @@ function handleMessage(data) {
           level: data.level,
           x: 0, y: 0, vx: 0, vy: 0, face: 1, swing: 0
         });
-        playerCount++;
+        playerCount = typeof data.playerCount === 'number' ? data.playerCount : playerCount + 1;
       }
       break;
       
     case 'leave':
       players.delete(data.playerId);
-      playerCount = Math.max(0, playerCount - 1);
+      playerCount = typeof data.playerCount === 'number' ? data.playerCount : Math.max(0, playerCount - 1);
       break;
       
     case 'states':
@@ -163,6 +195,7 @@ function handleMessage(data) {
     case 'dig':
       if (data.playerId !== playerId) {
         dugBlocks.set(`${data.x},${data.y}`, Date.now());
+        if (typeof Game !== 'undefined' && Game.applyRemoteDig) Game.applyRemoteDig(data.x, data.y);
       }
       break;
       
@@ -193,7 +226,8 @@ function sendState(x, y, vx, vy, face, swing) {
     vx: Math.round(vx),
     vy: Math.round(vy),
     face,
-    swing: swing > 0 ? 1 : 0
+    swing: swing > 0 ? 1 : 0,
+    level: (RPG.getProfile() || {}).level || 1
   }));
 }
 
@@ -286,6 +320,8 @@ window.Multiplayer = {
   get connected() { return connected; },
   get playerId() { return playerId; },
   get players() { return players; },
-  get playerCount() { return playerCount; }
+  get playerCount() { return playerCount; },
+  get worldSeed() { return worldSeed; },
+  get dugBlocks() { return dugBlocks; }
 };
 })();

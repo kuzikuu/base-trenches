@@ -8,22 +8,27 @@ let sdk = null;
 let context = null;
 let isInHost = false;
 let safeAreaInsets = { top: 0, bottom: 0, left: 0, right: 0 };
+let contextReady = Promise.resolve(null);
 
 function init() {
   if (typeof miniapp !== 'undefined' && miniapp.sdk) {
     sdk = miniapp.sdk;
-    isInHost = true;
-    
-    try {
-      context = sdk.context;
+    // sdk.context is a Promise; outside a host it may never resolve, so cap the wait
+    const timeout = new Promise(r => setTimeout(() => r(null), 1500));
+    contextReady = Promise.race([Promise.resolve(sdk.context), timeout]).then(ctx => {
+      context = ctx || null;
+      isInHost = !!(context && context.user);
       if (context && context.client && context.client.safeAreaInsets) {
         safeAreaInsets = context.client.safeAreaInsets;
         applySafeAreaInsets();
       }
-      Haptics.init(sdk);
-    } catch (e) {
+      Haptics.init(isInHost ? sdk : null);
+      return context;
+    }).catch(e => {
       console.warn('[MiniApp] Failed to get context:', e);
-    }
+      Haptics.init(null);
+      return null;
+    });
   } else {
     Haptics.init(null);
   }
@@ -87,6 +92,7 @@ window.MiniApp = {
   shareScore,
   get isInHost() { return isInHost; },
   get context() { return context; },
+  get contextReady() { return contextReady; },
   get safeAreaInsets() { return safeAreaInsets; }
 };
 })();

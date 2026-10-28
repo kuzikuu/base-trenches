@@ -49,12 +49,12 @@ This creates:
 - `{ type: 'state', x, y, vx, vy, face, swing }`
 - `{ type: 'dig', x, y }`
 - `{ type: 'chat', text }`
-- `{ type: 'xp', xp, depth, profileId }`
+- `{ type: 'xp', xp, depth }` (credited only to the profile verified at connect time)
 
 **Server → Client:**
-- `{ type: 'init', playerId, players, dugBlocks, playerCount }`
+- `{ type: 'init', playerId, seed, players, dugBlocks, playerCount }` (`seed` = shared world seed for the room)
 - `{ type: 'join', playerId, name, pfp, level }`
-- `{ type: 'leave', playerId }`
+- `{ type: 'leave', playerId, playerCount }`
 - `{ type: 'states', players, playerCount }`
 - `{ type: 'dig', playerId, x, y }`
 - `{ type: 'chat', playerId, text, name }`
@@ -113,3 +113,15 @@ Allowed origins:
 - `https://kuzikuu.github.io`
 - `http://localhost:8080` (dev)
 - `http://localhost:9999` (dev)
+
+## Auth model
+
+- **Guests**: id `guest:<uuid>`. The first save stores a SHA-256 of the client's `X-Guest-Secret` header (random, kept in localStorage); later saves must send the same secret.
+- **Farcaster/Base**: id `fid:<fid>`. Saves require `Authorization: Bearer <Quick Auth JWT>` (RS256, iss `https://auth.farcaster.xyz`, aud = `base-trenches.pages.dev` or `kuzikuu.github.io`, sub = fid).
+- **WebSocket**: browsers can't set headers, so the client passes `?token=` (Quick Auth) or `?profileId=&secret=` (guest). The Worker verifies them and the room only credits XP to that profile.
+- Profile stats are still client-authoritative (a guest can post any XP for *their own* profile); server-side run validation is future work.
+- `PROFILES_SHARD` in index.js names the Profiles DO instance; change it to start a fresh leaderboard season.
+
+## Deployed
+
+- `https://base-trenches-server.base-trenches.workers.dev`

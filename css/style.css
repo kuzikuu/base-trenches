@@ -287,3 +287,11 @@ body{padding-top:var(--safe-top);padding-bottom:var(--safe-bottom);padding-left:
   .bigbtn{font-size:11px;padding:12px 18px}
   .over-actions{gap:8px}
 }
+
+/* MP fixes: keep SND/VIB/MENU on one line at 390px, and lift the level/XP HUD above the touch d-pad */
+@media (max-width:560px){
+  #topbar{gap:8px;padding:0 10px}
+  #topbar .iconbtn{padding-left:6px;padding-right:6px;font-size:9px}
+}
+/* level/XP/online HUD sits under the lives bar (bottom-left collided with the ticker on desktop and the d-pad on touch) */
+.hudleft{bottom:auto;top:62px;left:12px}

@@ -3,7 +3,7 @@
 
 name = "base-trenches-server"
 main = "index.js"
-compatibility_date = "2024-01-01"
+compatibility_date = "2025-09-01"
 
 # Durable Objects
 [[durable_objects.bindings]]
@@ -17,8 +17,8 @@ class_name = "Profiles"
 # Migrations for SQLite-backed Durable Objects
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["Profiles"]
-new_classes = ["TrenchRoom"]
+# Both SQLite-backed (required on the Workers Free plan)
+new_sqlite_classes = ["TrenchRoom", "Profiles"]
 
 # For local development
 [dev]

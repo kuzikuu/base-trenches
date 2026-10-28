@@ -65,7 +65,7 @@ const UXB=["....#....","...###...","..#####..","..#mmm#..","..#####..","..#####.
 
 // ---------- state ----------
 let ridge=null,cv,ctx,VW=320,VH=200,SCALE=3;
-let world=null,hp=null,seed=1,rng=Math.random,seams=[],hotList=[];
+let world=null,hp=null,seed=1,rng=Math.random,seams=[],hotList=[],sharedSeed=null;
 let P,cam={x:0,y:0},shake=0,flash=0,glitch=0;
 let bullets=[],lanes=[],shells=[],booms=[],parts=[],texts=[],falling=[],unstable=new Map(),fuses=[];
 let mode="title",paused=false,time=0,runTime=0,timers={},banner=null;
@@ -109,11 +109,13 @@ function rowGen(y){
 }
 function tile(x,y){if(x<0||x>=W)return y>=FLOOR?T.BED:(y<S?T.AIR:T.TRENCH);if(y<0)return T.AIR;if(!world[y])rowGen(y);return world[y][x]}
 function setTile(x,y,t){if(x<0||x>=W||y<0)return;if(!world[y])rowGen(y);world[y][x]=t;hp[y][x]=HP[t]||0}
+function applyRemoteDig(x,y){if(!Number.isInteger(x)||!Number.isInteger(y)||!world)return;const t=tile(x,y);if(!SOLID.has(t)||t===T.BED)return;setTile(x,y,y<FLOOR?T.TRENCH:T.DUG)}
 const solidAt=(x,y)=>SOLID.has(tile(x,y));
 const isAir=t=>!SOLID.has(t);
 
 function newRun(){
-  seed=(Math.random()*1e9)|0;rng=mulberry(seed);world=[];hp=[];
+  // Multiplayer: everyone in the room uses the room's seed so the trench is the same for all
+  seed=sharedSeed!=null?sharedSeed:(Math.random()*1e9)|0;rng=mulberry(seed);world=[];hp=[];
   seams=[];let sy=FLOOR+9;let i=0;
   while(sy<FLOOR+2000){const hl=hotList.length?hotList[i%hotList.length]:{ticker:"EXAMPLE"};
     seams.push({x:3+Math.floor(rng()*(W-9)),y:sy,ticker:hl.ticker,status:hl.status||"",left:9});sy+=16+Math.floor(i*3+rng()*10);i++;}
@@ -129,6 +131,8 @@ function newRun(){
     const prot=gearStats.protection;
     if(prot>0)lives=Math.min(9,lives+prot); // Helmet adds extra hits
   }
+  // Re-apply tiles other players dug recently
+  if(typeof Multiplayer!=='undefined'&&Multiplayer.dugBlocks)Multiplayer.dugBlocks.forEach((_,k)=>{const [x,y]=k.split(',').map(Number);applyRemoteDig(x,y)});
   hud(true);
 }
 
@@ -568,6 +572,9 @@ const Game={
       for(const b of bunkers){const top=S*TS;if(x>b.col*TS-8&&x<(b.col+2)*TS+8&&y>top-26&&y<top+24){cb.onOpen&&cb.onOpen(b.id);return}}});
     requestAnimationFrame(frame)},
   setHotList(l){hotList=l;newRun()},
+  // Multiplayer: adopt the room's world seed (regenerates the trench unless a run is in progress)
+  setSeed(s){if(sharedSeed===s)return;sharedSeed=s;if(mode!=="play")newRun()},
+  applyRemoteDig,
   start(){Sfx.unlock();newRun();mode="play";paused=false;hud(true)},
   pause(p){paused=p;if(p)for(const k in keys)keys[k]=false},
   get mode(){return mode},

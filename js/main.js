@@ -145,7 +145,7 @@ function renderInventory(){
   if(!profile)return '<p class="note">No profile loaded</p>';
   
   const {level,xpInLevel,xpForNext}=BT_CONFIG.levelFromXp(profile.xp);
-  const pfpHtml=profile.pfp?`<img src="${profile.pfp}" alt="">`:'';
+  const pfpHtml=profile.pfp?`<img src="${escHtml(profile.pfp)}" alt="">`:'';
   
   let html=`
     <div class="profile-card">
@@ -223,7 +223,7 @@ async function renderLeaderboard(){
         const rank=i+1;
         const rankClass=rank===1?'gold':rank===2?'silver':rank===3?'bronze':'';
         const isMe=profile&&row.id===profile.id;
-        const pfpHtml=row.pfp?`<img src="${row.pfp}" alt="">`:'';
+        const pfpHtml=row.pfp?`<img src="${escHtml(row.pfp)}" alt="">`:'';
         const value=type==='depth'?`${row.best_depth}M`:`${row.xp} XP`;
         html+=`<div class="lb-row ${rank<=3?'top3':''} ${isMe?'equipped':''}">
           <div class="lb-rank ${rankClass}">#${rank}</div>
@@ -314,6 +314,6 @@ Promise.all([
   },450);
 });
 
-// Periodic RPG HUD update
-setInterval(updateRpgHud,1000);
+// Periodic RPG HUD update (+ online count, which onHud only refreshes when lives/mult/depth change)
+setInterval(()=>{updateRpgHud();$("#onlineCount").textContent=Multiplayer.playerCount},1000);
 })();

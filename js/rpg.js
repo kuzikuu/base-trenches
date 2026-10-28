@@ -87,6 +87,9 @@ async function loadProfile() {
   let fcName = null;
   let fcPfp = null;
   
+  if (typeof MiniApp !== 'undefined' && MiniApp.contextReady) {
+    try { await MiniApp.contextReady; } catch (e) {}
+  }
   if (typeof MiniApp !== 'undefined' && MiniApp.context && MiniApp.context.user) {
     fid = MiniApp.context.user.fid;
     fcName = MiniApp.context.user.username || MiniApp.context.user.displayName;
@@ -97,9 +100,7 @@ async function loadProfile() {
   
   // Try to load from server
   try {
-    const response = await fetch(`${BT_CONFIG.serverUrl}/api/profile?id=${encodeURIComponent(profileId)}`, {
-      headers: fid ? { 'Authorization': `Bearer ${await getAuthToken()}` } : {}
-    });
+    const response = await fetch(`${BT_CONFIG.serverUrl}/api/profile?id=${encodeURIComponent(profileId)}`);
     
     if (response.ok) {
       const data = await response.json();
@@ -108,6 +109,8 @@ async function loadProfile() {
         // Update name/pfp from Farcaster if available
         if (fcName) profile.name = fcName;
         if (fcPfp) profile.pfp = fcPfp;
+        if (!profile.equipped) profile.equipped = {};
+        if (!Array.isArray(profile.inventory)) profile.inventory = [];
         saveLocal();
         return profile;
       }
@@ -138,13 +141,17 @@ async function loadProfile() {
   }
   
   saveLocal();
+  // Register the profile server-side so the WebSocket can be verified for XP credit
+  await saveToServer();
   return profile;
 }
 
 async function getAuthToken() {
+  if (!(profile && profile.fid)) return null; // guests use the guest secret instead
   if (typeof miniapp !== 'undefined' && miniapp.sdk && miniapp.sdk.quickAuth) {
     try {
-      const result = await miniapp.sdk.quickAuth.getToken({ audience: BT_CONFIG.homeUrl });
+      // Quick Auth sets aud to this mini app's domain automatically
+      const result = await miniapp.sdk.quickAuth.getToken();
       return result.token;
     } catch (e) {
       console.warn('[RPG] Quick auth failed:', e);
@@ -169,7 +176,8 @@ async function saveToServer() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        ...(!profile.fid ? { 'X-Guest-Secret': getGuestSecret() } : {})
       },
       body: JSON.stringify(profile)
     });
@@ -361,6 +369,8 @@ window.RPG = {
   onGearDrop,
   fetchLeaderboard,
   getProfile: () => profile,
+  getAuthToken,
+  getGuestSecret,
   GEAR_TEMPLATES,
   GEAR_RARITIES,
   RARITY_COLORS
