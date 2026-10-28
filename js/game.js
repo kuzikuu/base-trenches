@@ -73,6 +73,9 @@ let mult=1,lives=9,maxDepth=0,gems=0,powerGems=0,milestones=new Set(),depthBonus
 const keys={},pressed={};
 let cb={};
 const bunkers=[{col:5,id:"hot",label:"HOT LIST"},{col:14,id:"calls",label:"CALLS"},{col:23,id:"callers",label:"CALLERS"},{col:32,id:"about",label:"HOW TO"}];
+// RPG stats (applied from equipped gear)
+let gearStats={digSpeed:1,protection:0,moveSpeed:1,luck:1};
+let sessionDigs=0,sessionXp=0,lastDepthXp=0,sessionStart=0;
 
 function rowGen(y){
   const r=new Uint8Array(W),h=new Uint8Array(W);
@@ -119,6 +122,13 @@ function newRun(){
   mult=1;lives=9;maxDepth=0;gems=0;powerGems=0;milestones=new Set();depthBonusAt=25;inv=0;dead=0;runTime=0;banner=null;
   timers={sweep:2.5,art:7,scan:0};
   cam.x=P.x-VW/2;cam.y=P.y-VH*.5;clampCam(true);
+  // RPG: reset session stats and get gear bonuses
+  sessionDigs=0;sessionXp=0;lastDepthXp=0;sessionStart=Date.now();
+  if(typeof RPG!=='undefined'){
+    gearStats=RPG.getGearStats();
+    const prot=gearStats.protection;
+    if(prot>0)lives=Math.min(9,lives+prot); // Helmet adds extra hits
+  }
   hud(true);
 }
 
@@ -162,7 +172,7 @@ function digTarget(){
   return[Math.floor((P.face>0?P.x+P.w+2:P.x-2)/TS),ty];
 }
 function dig(){
-  P.swing=.18;P.digCd=.2;
+  P.swing=.18;P.digCd=.2/gearStats.digSpeed; // Faster dig with better pickaxe
   const [x,y]=digTarget();const t=tile(x,y);
   const hx=x*TS+6,hy=y*TS+6;
   if(!SOLID.has(t)){Sfx.play("dig",1);return}
@@ -177,8 +187,21 @@ function dig(){
   setTile(x,y,y<FLOOR?T.TRENCH:T.DUG);
   burst(hx,hy,8,cols,90);
   if(typeof Haptics!=='undefined')Haptics.impact('medium');
-  if(t===T.GEM){gems++;bump(GEM_X);addText(hx-8,hy-8,"x"+GEM_X.toFixed(2),BLUE);Sfx.play("gem",gems%5);burst(hx,hy,12,["#16e0ff","#fff",BLUE],100,120);if(typeof Haptics!=='undefined')Haptics.notification('success');}
-  if(t===T.POWER){powerGems++;bump(POWER_X);Sfx.play("gem",4);burst(hx,hy,18,["#ff2bd6","#ffd400","#16e0ff","#fff"],130,100);if(typeof Haptics!=='undefined')Haptics.notification('success');
+  // RPG: XP for digging + multiplayer sync
+  sessionDigs++;
+  if(typeof RPG!=='undefined')RPG.addXp(1,'dig');
+  if(typeof Multiplayer!=='undefined')Multiplayer.sendDig(x,y);
+  if(t===T.GEM){
+    gems++;bump(GEM_X);addText(hx-8,hy-8,"x"+GEM_X.toFixed(2),BLUE);Sfx.play("gem",gems%5);
+    burst(hx,hy,12,["#16e0ff","#fff",BLUE],100,120);
+    if(typeof Haptics!=='undefined')Haptics.notification('success');
+    if(typeof RPG!=='undefined'){RPG.addXp(5,'diamond');RPG.tryGearDrop(maxDepth);}
+  }
+  if(t===T.POWER){
+    powerGems++;bump(POWER_X);Sfx.play("gem",4);
+    burst(hx,hy,18,["#ff2bd6","#ffd400","#16e0ff","#fff"],130,100);
+    if(typeof Haptics!=='undefined')Haptics.notification('success');
+    if(typeof RPG!=='undefined'){RPG.addXp(10,'power');RPG.tryGearDrop(maxDepth);}
     const s=seams.find(s=>x>=s.x&&x<s.x+3&&y>=s.y&&y<s.y+3);
     if(s){s.left--;addText(hx-14,hy-10,"$"+s.ticker+" "+(9-s.left)+"/9","#ff2bd6");
       if(s.left===0){Sfx.play("power");showBanner("$"+s.ticker+" POWERED UP");flash=.15;glitch=.35;addShake(6);if(typeof Haptics!=='undefined')Haptics.notification('success')}}}
@@ -214,8 +237,9 @@ function update(dt){
   const L=keys.left,R=keys.right,U=keys.up,D=keys.down;
   if(playing){
     const tgt=(R?1:0)-(L?1:0);
-    if(tgt){P.vx+=tgt*700*dt;P.face=tgt;P.walk+=dt*10}else{P.vx*=Math.pow(.0005,dt)}
-    P.vx=Math.max(-62,Math.min(62,P.vx));
+    const spd=62*gearStats.moveSpeed; // Boots speed bonus
+    if(tgt){P.vx+=tgt*700*gearStats.moveSpeed*dt;P.face=tgt;P.walk+=dt*10}else{P.vx*=Math.pow(.0005,dt)}
+    P.vx=Math.max(-spd,Math.min(spd,P.vx));
     P.aim=D?"down":U&&!tgt?"up":"side";
     const my=Math.floor((P.y+P.h/2)/TS),touchL=solidAt(Math.floor((P.x-3)/TS),my),touchR=solidAt(Math.floor((P.x+P.w+3)/TS),my);
     if(pressed.up&&P.ground){P.vy=-150;P.ground=false;Sfx.play("jump")}
@@ -225,7 +249,7 @@ function update(dt){
     P.digCd-=dt;
     if((pressed.dig||keys.dig)&&P.digCd<=0)dig();
   }else{P.vx*=.8}
-  if(dead){dead-=dt;if(dead<=0){dead=0;mode="over";best();cb.onOver&&cb.onOver(stats())}}
+  if(dead){dead-=dt;if(dead<=0){dead=0;mode="over";best();endSession();cb.onOver&&cb.onOver(stats())}}
   P.swing=Math.max(0,P.swing-dt);inv=Math.max(0,inv-dt);
   P.vy=Math.min(260,P.vy+520*dt);
   P.x+=P.vx*dt;collide("x");
@@ -234,9 +258,21 @@ function update(dt){
   // depth
   const depth=Math.max(0,Math.floor((P.y+P.h)/TS)-FLOOR);
   if(playing&&depth>maxDepth){maxDepth=depth;
-    if(maxDepth>=depthBonusAt){bump(DEPTH_X);addText(P.x-10,P.y-8,depthBonusAt+"M x"+DEPTH_X,"#ff2bd6");depthBonusAt+=25}
+    // RPG: XP for depth milestones
+    if(depth-lastDepthXp>=5){
+      lastDepthXp=depth;
+      if(typeof RPG!=='undefined')RPG.addXp(2,'depth');
+    }
+    if(maxDepth>=depthBonusAt){bump(DEPTH_X);addText(P.x-10,P.y-8,depthBonusAt+"M x"+DEPTH_X,"#ff2bd6");depthBonusAt+=25;
+      if(typeof RPG!=='undefined')RPG.tryGearDrop(maxDepth);
+    }
     hud()}
   clampCam(false);
+  // Multiplayer: send state and interpolate others
+  if(typeof Multiplayer!=='undefined'&&Multiplayer.connected){
+    Multiplayer.sendState(P.x,P.y,P.vx,P.vy,P.face,P.swing);
+    Multiplayer.interpolatePlayers(dt);
+  }
 
   // difficulty
   const diff=Math.min(1,runTime/150);
@@ -354,6 +390,7 @@ function draw(){
   for(const s of shells){const X=Math.round(s.x-cx),Y=Math.round(s.y-cy);
     sprite(ctx,[".#.","###","###","#m#","###","d.d"],X-1,Y-3,false,CM);
     if(step%2===0){const gy=S*TS-cy;ctx.fillStyle="#ff2bd6";ctx.fillRect(X-4,gy-1,9,1);ctx.fillRect(X,gy-5,1,9);ctx.fillRect(X-3,gy-4,1,1);ctx.fillRect(X+3,gy-4,1,1)}}
+  drawOtherPlayers(cx,cy,step);
   drawPlayer(cx,cy,step);
   // bullets
   for(const b of bullets){const X=Math.round(b.x-cx),Y=Math.round(b.y-cy);ctx.fillStyle=BLUE;ctx.fillRect(X-(b.vx>0?5:0),Y,6,2);ctx.fillStyle="#ffd400";ctx.fillRect(b.vx>0?X:X-1,Y,1,2)}
@@ -445,11 +482,58 @@ function drawPlayer(cx,cy,step){
     ctx.fillRect(X2,Y2,3,1);ctx.fillRect(X2,Y2,1,3);ctx.fillRect(X2+TS-3,Y2,3,1);ctx.fillRect(X2+TS-1,Y2,1,3);ctx.fillRect(X2,Y2+TS-1,3,1);ctx.fillRect(X2,Y2+TS-3,1,3);ctx.fillRect(X2+TS-3,Y2+TS-1,3,1);ctx.fillRect(X2+TS-1,Y2+TS-3,1,3)}}
 }
 
+// Draw other players (multiplayer ghosts)
+const GHOST_CM={"#":"rgba(0,82,255,0.5)","w":"rgba(255,255,255,0.6)","d":"rgba(11,26,143,0.5)","c":"rgba(22,224,255,0.5)","m":"rgba(255,43,214,0.5)","y":"rgba(255,212,0,0.5)","b":"rgba(138,90,43,0.5)","t":"rgba(201,162,122,0.5)","p":"rgba(201,214,255,0.5)"};
+function drawOtherPlayers(cx,cy,step){
+  if(typeof Multiplayer==='undefined'||!Multiplayer.connected)return;
+  const players=Multiplayer.players;
+  players.forEach(p=>{
+    if(!p.x&&p.x!==0)return;
+    const X=Math.round(p.x-cx)-1,Y=Math.round(p.y-cy);
+    const f=p.face<0;
+    const moving=Math.abs(p.vx||0)>8;
+    const legs=moving?LEGS[1+((step/3|0)%2)]:LEGS[0];
+    // Draw ghost with transparency
+    sprite(ctx,SOLDIER_TOP,X,Y,f,GHOST_CM);
+    sprite(ctx,legs,X,Y+9,f,GHOST_CM);
+    // Name tag
+    if(p.name){
+      const name=(p.name.length>10?p.name.slice(0,9)+'…':p.name).toUpperCase();
+      const tw=PixFont.width(name)+4;
+      ctx.fillStyle="rgba(255,255,255,0.8)";
+      ctx.fillRect(X+5-tw/2|0,Y-10,tw,7);
+      PixFont.draw(ctx,name,X+7-tw/2|0,Y-9,BLUE);
+      // Level badge
+      if(p.level>1){
+        ctx.fillStyle=BLUE;ctx.fillRect(X+5+tw/2|0,Y-10,12,7);
+        PixFont.draw(ctx,"L"+p.level,X+7+tw/2|0,Y-9,"#fff");
+      }
+    }
+    // Chat bubble
+    if(p.chatText){
+      const ct=p.chatText.length>20?p.chatText.slice(0,19)+'…':p.chatText;
+      const cw=PixFont.width(ct)+6;
+      ctx.fillStyle="#fff";ctx.fillRect(X+5-cw/2|0,Y-22,cw,9);
+      ctx.fillStyle=BLUE;ctx.fillRect(X+5-cw/2|0,Y-22,cw,1);ctx.fillRect(X+5-cw/2|0,Y-14,cw,1);
+      ctx.fillRect(X+5-cw/2|0,Y-22,1,9);ctx.fillRect(X+5+cw/2-1|0,Y-22,1,9);
+      PixFont.draw(ctx,ct.toUpperCase(),X+8-cw/2|0,Y-20,BLUE);
+    }
+  });
+}
+
 // ---------- hud / stats ----------
 let lastHud="";
 function hud(force){const s=lives+"|"+mult.toFixed(2)+"|"+maxDepth;if(!force&&s===lastHud)return;lastHud=s;cb.onHud&&cb.onHud({lives,mult,depth:maxDepth,goal:Math.min(1,Math.log(mult)/Math.log(GOAL))})}
 function best(){const b=+localStorage.getItem("bt_best")||1;if(mult>b)localStorage.setItem("bt_best",mult.toFixed(2))}
-function stats(){return{mult,depth:maxDepth,gems,powerGems,time:runTime,best:Math.max(mult,+localStorage.getItem("bt_best")||1)}}
+function stats(){return{mult,depth:maxDepth,gems,powerGems,time:runTime,best:Math.max(mult,+localStorage.getItem("bt_best")||1),digs:sessionDigs}}
+function endSession(){
+  // RPG: save stats on game over
+  if(typeof RPG!=='undefined'){
+    RPG.updateStats({depth:maxDepth,diamonds:gems+powerGems,digs:sessionDigs,died:true,playTime:Date.now()-sessionStart});
+    RPG.saveToServer();
+  }
+  if(typeof Multiplayer!=='undefined')Multiplayer.flushXp(maxDepth);
+}
 
 // ---------- loop / sizing ----------
 function resize(){

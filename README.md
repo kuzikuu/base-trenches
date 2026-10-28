@@ -244,10 +244,66 @@ vercel.json               Vercel config (optional)
 
 ---
 
+## Multiplayer Server
+
+The game has optional multiplayer support with RPG progression. The server runs as a **Cloudflare Worker with Durable Objects**.
+
+### Server features
+- **Shared live trench:** See other players digging in real-time (ghost diggers with name tags)
+- **RPG progression:** XP from digging (1 XP per block, 2 XP per 5m depth milestone), levels (curve: 100 × 1.5^(level-1))
+- **Gear system:** Pickaxes (dig speed), helmets (extra lives), boots (move speed), charms (diamond luck)
+- **Leaderboards:** Global rankings by XP and best depth
+- **Profile binding:** Guest accounts or Farcaster account linking via Quick Auth
+
+### Server files
+```
+server/
+├── index.js         Cloudflare Worker with Durable Objects
+├── wrangler.toml    Wrangler configuration
+└── README.md        API documentation
+```
+
+### Deploy the server
+
+```bash
+cd server
+# Test locally
+npx wrangler dev --port 8787
+
+# Deploy to Cloudflare
+npx wrangler deploy
+```
+
+After deploying, update `BT_SERVER_URL` in `js/config.js` with your deployed worker URL:
+```javascript
+const DEFAULT_SERVER_URL = 'https://base-trenches-server.YOUR_SUBDOMAIN.workers.dev';
+```
+
+### Client configuration
+
+The client connects automatically when a profile exists. Set `window.BT_SERVER_URL` before loading scripts to override:
+```html
+<script>window.BT_SERVER_URL = 'https://your-server.workers.dev';</script>
+```
+
+### Offline fallback
+
+If the server is unreachable, the game continues in single-player mode. An "OFFLINE TRENCH" badge appears in the HUD. Progress is saved locally and synced when reconnected.
+
+### New client files
+```
+js/config.js         Server URL and game constants
+js/rpg.js            Profile, XP, levels, gear, inventory management
+js/multiplayer.js    WebSocket client for real-time sync
+```
+
+---
+
 ## Known gaps / next steps
 - Data is static EXAMPLE DATA. The bot, X polling and DexScreener price job still need to be built.
 - "Game rounds" per pinned coin currently means the coin appears as a labelled diamond seam in the shared game. Seeded per-coin levels (`game_round.seed`) are the next step.
-- No on-chain/wallet features, leaderboard submissions, or anti-cheat for game scores.
+- Multiplayer anti-cheat is basic (rate limiting). XP claims are server-validated.
+- Raids / co-op squads are not yet implemented (planned next phase).
 - Social links in `links` are placeholders.
 - **iOS Safari:** does not support `navigator.vibrate`, so haptics are silent on iOS outside the Farcaster host app.
 - Not financial advice. Memes are volatile.

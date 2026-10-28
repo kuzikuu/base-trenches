@@ -1,0 +1,29 @@
+# Base Trenches Multiplayer Server
+# Deploy: npx wrangler deploy
+
+name = "base-trenches-server"
+main = "index.js"
+compatibility_date = "2024-01-01"
+
+# Durable Objects
+[[durable_objects.bindings]]
+name = "TRENCH_ROOM"
+class_name = "TrenchRoom"
+
+[[durable_objects.bindings]]
+name = "PROFILES"
+class_name = "Profiles"
+
+# Migrations for SQLite-backed Durable Objects
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Profiles"]
+new_classes = ["TrenchRoom"]
+
+# For local development
+[dev]
+port = 8787
+
+# Production environment (uncomment and configure after first deploy)
+# [env.production]
+# name = "base-trenches-server"
