@@ -96,6 +96,8 @@ function drawProp(th,x,y,X,Y,step){
     case "ember": {ctx.fillStyle=(step+x+y)%4<2?"#ff2bd6":"#ffd400";const k=(step+x*5)%TS;ctx.fillRect(X+((x*7)%10),Y+TS-1-k,1,1);if(below){ctx.fillStyle="#ff2bd6";ctx.fillRect(X,Y+TS-1,TS,1)}}break;
     case "circuit": ctx.fillStyle="#16e0ff";ctx.fillRect(X,Y+5,TS,1);ctx.fillRect(X+((x*5)%9)+1,Y+2,1,4);if(step%6<3){ctx.fillStyle="#22e36b";ctx.fillRect(X+((x*5)%9),Y+1,3,2)}break;
     case "wire": ctx.fillStyle=BLUE;for(let k=0;k<TS;k+=3)ctx.fillRect(X+k,Y+6+((k/3)%2),1,1);break;
+    case "dune": if(below){ctx.fillStyle="#c9a27a";for(let k=0;k<TS;k++)ctx.fillRect(X+k,Y+TS-2-((k+x)%6<3?1:0),1,2);if(hash2(x,y,12)<.3){ctx.fillStyle="#fff";ctx.fillRect(X+3,Y+TS-4,5,1);ctx.fillRect(X+4,Y+TS-5,1,1);ctx.fillRect(X+7,Y+TS-5,1,1)}}
+      else{ctx.fillStyle=(step+x)%6<3?"#ffd400":"#ff2bd6";ctx.fillRect(X+((x*7)%9)+1,Y+((step+y*3)%TS),1,1)}break;
   }
 }
 // sprite helper
@@ -132,8 +134,7 @@ let cb={};
 const bunkers=[{col:5,id:"hot",label:"HOT LIST"},{col:14,id:"calls",label:"CALLS"},{col:23,id:"callers",label:"CALLERS"},{col:32,id:"about",label:"HOW TO"}];
 // RPG stats (applied from equipped gear)
 let gearStats={digSpeed:1,protection:0,moveSpeed:1,luck:1};
-let curLevel=1,runId="",rats=[],fortified=new Set(),fortCd=0,regenT=0,secondWindUsed=false,seamMax=0,seamRng=null,seamI=0;
-const RAT=["..##....","#####.#.",".#w###..","..####..",".#..#..."];
+let curLevel=1,runId="",fortified=new Set(),fortCd=0,regenT=0,secondWindUsed=false,seamMax=0,seamRng=null,seamI=0;
 let sessionDigs=0,sessionXp=0,lastDepthXp=0,sessionStart=0;
 
 // Power seams past the first 2000 rows are generated lazily (own seeded stream, same for everyone).
@@ -189,7 +190,7 @@ function newRun(){
   while(sy<FLOOR+2000){const hl=hotList.length?hotList[i%hotList.length]:{ticker:"EXAMPLE"};
     seams.push({x:3+Math.floor(rng()*(W-9)),y:sy,ticker:hl.ticker,status:hl.status||"",left:9});sy+=16+Math.floor(i*3+rng()*10);i++;}
   seamMax=sy;seamRng=null;seamI=i;
-  curLevel=1;rats=[];fortified=new Set();fortCd=0;regenT=0;secondWindUsed=false;
+  curLevel=1;crawlers=[];spits=[];boss=null;bossDone=new Set();tpCd=0;fortified=new Set();fortCd=0;regenT=0;secondWindUsed=false;
   runId="r-"+Date.now().toString(36)+"-"+((Math.random()*1e8)|0).toString(36);
   P={x:20*TS+2,y:(FLOOR)*TS-11,w:8,h:11,vx:0,vy:0,face:1,ground:false,swing:0,aim:"side",digCd:0,walk:0,climb:false};
   bullets=[];lanes=[];shells=[];booms=[];parts=[];texts=[];falling=[];unstable.clear();fuses=[];
@@ -214,10 +215,10 @@ function burst(x,y,n,colors,sp,grav,life){for(let i=0;i<n;i++){const a=rng()*Mat
 function addText(x,y,s,c){texts.push({x,y,s,c:c||BLUE,t:0})}
 function addShake(n){shake=Math.max(shake,n)}
 
-function hurt(n,fx,fy){
+function hurt(n,srcX,srcY){
   if(inv>0||mode!=="play"||dead)return;
   lives=Math.max(0,lives-n);inv=1.4;flash=.12;glitch=.25;addShake(5+n*2);Sfx.play("hit");
-  const dir=Math.sign(P.x+P.w/2-(fx??P.x))||1;P.vx=dir*90;P.vy=-110;
+  const dir=Math.sign(P.x+P.w/2-(srcX??P.x))||1;P.vx=dir*90;P.vy=-110;
   burst(P.x+4,P.y+5,14,["#ff2bd6",BLUE,"#fff"],90);
   cb.onHit&&cb.onHit(n);
   if(typeof Multiplayer!=='undefined')Multiplayer.sendEvent({kind:'hit'});
@@ -239,13 +240,292 @@ function explode(tx,ty,r,dmg){
   burst(cx,cy,46,[BLUE,"#fff",BLUE,"#ffd400","#ff2bd6",BROWN],170,200,.9);
   addShake(10);flash=.18;glitch=.3;Sfx.play("boom");
   const pd=Math.hypot(P.x+P.w/2-cx,P.y+P.h/2-cy);
-  for(const rt of rats)if(Math.hypot(rt.x+4-cx,rt.y+3-cy)<(r+.4)*TS)rt.hp=0;
+  for(const c of crawlers)if(!c.dead&&Math.hypot(c.x+4-cx,c.y+3-cy)<(r+.4)*TS)c.hp=0;
+  if(boss&&Math.hypot(boss.x-cx,boss.y-cy)<(r+1)*TS)bossHurt(3,"blast");
   if(pd<(r+.6)*TS)hurt(Math.max(1,(dmg||2)-fx.blastReduce),cx,cy);
   else if(mode==="play"&&!dead){
     if(typeof Multiplayer!=='undefined')Multiplayer.sendEvent({kind:'survive'});
     if(typeof Campaign!=='undefined')Campaign.note('survive',1,curLevel);
   }
   timers.scan=0;
+}
+
+// ---------- crawlers + the Sandmaw ----------
+// Every theme has its own crawler pair (js/levels.js CRAWLERS) and they scale with depth on every
+// level, level 1 included. The sim runs here; the room only pays XP for a kill near where it last saw
+// you, and for the boss only after it saw the fight start (server/lib/xp.js).
+// B body · E eye · D ink · W white · Y spark. 8x6, original art.
+const CRAWL_SPR={
+  mudling:["B......B","BB.BB.BB",".BEBBEB.",".BBWWBB.","..BBBB..",".B.B.B.."],
+  wireskitter:["..D..D..","D.BBBB.D",".DBEEBD.","D.BBBB.D",".D....D.","D......D"],
+  hissbug:["....Y...","...D....",".BBBBBB.","BBEBBEBB","BBBDDBBB",".D.D.D.."],
+  lampmole:["..YY....",".DDDD...","BBBBBBB.","BEBBBBBW","BBBBBBB.",".D..D..."],
+  paleclinger:["D.D..D.D",".DBBBBD.","DBEBBEBD",".BBBBBB.","D.BBBB.D","..D..D.."],
+  bonechitter:[".BBBBB..","BDBBDBB.","BBBBBBB.",".BWBWB..","..DDD...",".D.D.D.."],
+  gillnipper:["...D....","..DBB...",".BBBBBBD","BEBBBBDD",".BWWBBBD","..D..D.."],
+  pumpleech:["........","..BBBB..",".BBBBBB.","BEBBBBBB","DBBBBBBD",".DDDDDD."],
+  cinderimp:["D.....D.",".D...D..",".BBBBB..","BBEBEBB.",".BWWWB..",".D...D.."],
+  magmatick:["........","..BBBB..",".BBYBBB.","BEBBBYBB",".BBBBBB.","D.D..D.D"],
+  glitchmite:[".BBBBBB.","BEBBBBEB","BBBBBBBB","B.B.B.B.",".B.B.B.B","B.B.B.B."],
+  packetcrawler:["DDDDDDD.","DBBBBBD.","DBEBEBD.","DBBBBBD.","DDDDDDD.","D.D.D.D."],
+  spicemite:["........","..BBB...",".BEBEB..","BBBBBBB.",".D.D.D..","........"],
+  wormling:["........","BBBB.WW.","BBBBBWEW","BBBBBWW.","DDDD....","........"]
+};
+const CRAWL_FALLBACK={id:"mudling",name:"Mudling",kind:"walker",body:BROWN,eye:"#ffd400",tag:""};
+const ELEV_COL=36;                       // the lift at the east end of the trench
+let crawlers=[],spits=[],boss=null,bossDone=new Set(),seenCrawl=new Set(),tpCd=0;
+const curDepth=()=>Math.max(0,Math.floor((P.y+P.h)/TS)-FLOOR);
+function crawlCtx(depth){
+  const tier=LV?LV.crawlerTier(depth):1,ld=LV?LV.levelDepthOf(depth):depth;
+  const st=LV?LV.crawlerStats(tier,ld):{hp:1,damage:1,speed:22,maxAlive:2,spawnEvery:6.5,secondaryChance:0};
+  const types=LV?LV.crawlersFor(levelsOn?curLevel:1):[CRAWL_FALLBACK,CRAWL_FALLBACK];
+  return{tier,ld,st,types};
+}
+function makeCrawler(type,x,y,st,o){
+  const k=type.kind,hpv=k==="swarmer"?Math.max(1,Math.ceil(st.hp/2)):k==="fuser"?Math.max(1,st.hp-1):st.hp;
+  const c={type,kind:k,x,y,vx:0,vy:0,hp:hpv,max:hpv,face:1,stun:.5,dmg:st.damage,spd:st.speed*(k==="swarmer"?1.3:k==="burrower"?.8:1),gnaw:0,t:rng()*1.2,ground:false,glitch:0,fuse:null,...o};
+  crawlers.push(c);return c;
+}
+function introCrawler(type,x,y){
+  if(seenCrawl.has(type.id))return;seenCrawl.add(type.id);
+  texts.push({x:x-14,y:y-14,s:type.name.toUpperCase(),c:"#ff2bd6",t:0,life:2.2});
+  cb.onCallout&&cb.onCallout("NEW CRAWLER: "+type.name.toUpperCase()+(type.tag?" · "+type.tag:""));
+}
+function spawnCrawler(depth,forceType,near){
+  const {st,types}=crawlCtx(depth);
+  const type=forceType||(rng()<st.secondaryChance&&types[1]?types[1]:types[0]);
+  const pr=Math.floor((P.y+P.h-1)/TS),pc=Math.floor((P.x+4)/TS);
+  for(let k=0;k<12;k++){
+    const side=rng()<.5?-1:1;let rx=pc+side*((near||5)+Math.floor(rng()*5)),ry=pr;
+    if(type.kind==="dropper"){rx=pc+side*(2+Math.floor(rng()*4));ry=pr-2-Math.floor(rng()*2)}
+    if(rx<1||rx>W-2||ry<=FLOOR||levelOfRow(ry)!==curLevel)continue;
+    const t=tile(rx,ry);if(t===T.BED||t===T.GATE||t===T.TIMBER||t===T.POWER)continue;
+    if(type.kind==="burrower")makeCrawler(type,rx*TS+2,ry*TS+6,st,{face:-side,burrow:true,stun:0});
+    else{
+      if(SOLID.has(t))setTile(rx,ry,T.DUG);
+      if(type.kind==="dropper"){if(!SOLID.has(tile(rx,ry-1))&&ry-1>FLOOR)setTile(rx,ry-1,T.DIRT);makeCrawler(type,rx*TS+2,ry*TS,st,{face:-side,cling:true,stun:0})}
+      else{const n=type.kind==="swarmer"?2+(rng()<.5?1:0):1;for(let i=0;i<n;i++)makeCrawler(type,rx*TS+2+i*2,ry*TS+6,st,{face:-side,stun:.5+i*.2})}
+      burst(rx*TS+6,ry*TS+6,12,[type.body,type.eye,BROWN],90);
+    }
+    introCrawler(type,rx*TS,ry*TS);return true;
+  }
+  return false;
+}
+function crawlerDown(c){
+  c.dead=true;burst(c.x+4,c.y+3,14,[c.type.body,INK,"#fff"],110);
+  if(mode!=="play")return;
+  addText(c.x-6,c.y-8,c.type.name.toUpperCase()+" DOWN","#ff2bd6");
+  // Local bump only when offline (RPG.addXp ignores it online); the room scores the real kill.
+  if(typeof RPG!=='undefined')RPG.addXp(LV?LV.killXp(levelsOn?curLevel:1):2,'kill');
+  if(typeof Multiplayer!=='undefined')Multiplayer.sendEvent({kind:'kill',x:Math.floor((c.x+4)/TS),y:Math.floor((c.y+3)/TS)});
+  cb.onKill&&cb.onKill(c.type.id);
+}
+function updateCrawlers(dt,playing){
+  const depth=curDepth();
+  if(mode==="play"&&LV){timers.crawl=(timers.crawl??3)-dt;
+    if(timers.crawl<=0){const {st}=crawlCtx(depth);timers.crawl=st.spawnEvery+rng()*1.5;
+      if(playing&&depth>=LV.CRAWLER_MIN_DEPTH_M&&crawlers.length<st.maxAlive&&!boss)spawnCrawler(depth)}}
+  for(const c of crawlers){if(c.dead)continue;
+    if(c.hp<=0){crawlerDown(c);continue}
+    c.stun=Math.max(0,c.stun-dt);c.t+=dt;c.glitch=Math.max(0,c.glitch-dt);
+    const dx=P.x-c.x,dy=P.y+P.h-(c.y+6),dist=Math.hypot(dx,dy);
+    if(Math.abs(c.y-P.y)>20*TS){c.dead=true;continue}
+    const chase=playing&&Math.abs(dy)<2.5*TS&&Math.abs(dx)<14*TS;
+    if(c.cling){if(playing&&Math.abs(dx)<TS*1.4&&dy>0){c.cling=false;c.vy=40;addText(c.x,c.y-6,"!","#ff2bd6")}else continue}
+    if(c.burrow){ // tunnels through the dirt toward you, then bursts out
+      const sp=c.spd*dt;c.x+=Math.sign(dx)*Math.min(Math.abs(dx),sp);c.y+=Math.sign(dy)*Math.min(Math.abs(dy),sp*.6);
+      if(rng()<.3)burst(c.x+4,c.y+3,1,[BROWN,TAN],25);
+      const tx=Math.floor((c.x+4)/TS),ty=Math.floor((c.y+3)/TS),t=tile(tx,ty);
+      if(playing&&dist<TS*2.2&&c.t>1.2&&t!==T.BED&&t!==T.GATE&&ty>FLOOR){c.burrow=false;c.stun=.3;if(SOLID.has(t))setTile(tx,ty,T.DUG);
+        c.x=tx*TS+2;c.y=ty*TS+6;c.vy=-120;burst(c.x+4,c.y+3,16,[BROWN,TAN,c.type.body],100);addText(c.x-6,c.y-8,"BURST!","#ff2bd6");addShake(2)}
+      continue}
+    if(c.kind==="fuser"){
+      if(c.fuse!=null){c.fuse-=dt;if(c.fuse<=0){c.dead=true;explode(Math.floor((c.x+4)/TS),Math.floor((c.y+3)/TS),1.6,c.dmg+1)}continue}
+      if(playing&&!c.stun&&dist<TS*1.6){c.fuse=.9;addText(c.x-6,c.y-8,"SSSS","#22e36b");Sfx.play("sweep")}}
+    if(c.kind==="spitter"&&playing&&!c.stun&&c.t>2.4&&Math.abs(dy)<TS*1.5&&Math.abs(dx)<10*TS&&Math.abs(dx)>TS){
+      c.t=0;c.face=Math.sign(dx)||1;spits.push({x:c.x+4,y:c.y+2,vx:c.face*95,vy:-25,dmg:c.dmg,l:0});addText(c.x,c.y-6,"PTOO","#ffd400")}
+    if(c.kind==="blinker"&&playing&&!c.stun&&c.t>2.6&&Math.abs(dx)>2*TS&&Math.abs(dx)<12*TS&&Math.abs(dy)<3*TS){c.t=0;
+      const tx=Math.floor((c.x+4+Math.sign(dx)*(2+Math.floor(rng()*2))*TS)/TS),ty=Math.floor((c.y+3)/TS),t=tile(tx,ty);
+      if(tx>0&&tx<W-1&&t!==T.BED&&t!==T.GATE&&t!==T.TIMBER){const G=["#16e0ff","#22e36b","#ff2bd6"];burst(c.x+4,c.y+3,8,G,70);if(SOLID.has(t))setTile(tx,ty,T.DUG);c.x=tx*TS+2;burst(c.x+4,c.y+3,8,G,70);c.glitch=.35}}
+    if(c.kind==="hopper"&&chase&&!c.stun&&c.ground&&c.t>1.3){c.t=0;c.vy=-165;c.ground=false}
+    // shared walk / gnaw / gravity (walkers use only this)
+    if(!c.stun&&playing&&c.fuse==null){const dir=chase?Math.sign(dx)||1:c.face;c.face=dir;c.vx=dir*c.spd}else c.vx*=.9;
+    c.vy=Math.min(240,c.vy+520*dt);
+    const nx=c.x+c.vx*dt,fy=Math.floor((c.y+3)/TS),fx2=Math.floor((nx+(c.vx>0?8:0))/TS);
+    if(solidAt(fx2,fy)){
+      if(chase&&!c.stun){c.gnaw+=dt;if(c.gnaw>.8){c.gnaw=0;const t=tile(fx2,fy);
+        if(t===T.TIMBER){hp[fy][fx2]--;if(hp[fy][fx2]<=0){setTile(fx2,fy,T.DUG);fortified.delete(fx2+","+fy)}burst(fx2*TS+6,fy*TS+6,5,[BROWN,TAN],60)}
+        else if(t!==T.BED&&t!==T.GATE&&t!==T.UXB&&fy>=FLOOR){setTile(fx2,fy,T.DUG);burst(fx2*TS+6,fy*TS+6,6,[BROWN,TAN],70)}
+        else c.face=-c.face}}
+      else{c.face=-c.face;c.vx=0;if(!solidAt(fx2,fy-1)&&solidAt(Math.floor((c.x+4)/TS),Math.floor((c.y+7)/TS)))c.vy=-150}
+    }else c.x=nx;
+    c.ground=false;c.y+=c.vy*dt;const gy=Math.floor((c.y+6)/TS);
+    if(c.vy>0&&solidAt(Math.floor((c.x+4)/TS),gy)){c.y=gy*TS-6;c.vy=0;c.ground=true}
+    else if(c.vy<0&&solidAt(Math.floor((c.x+4)/TS),Math.floor(c.y/TS))){c.y=(Math.floor(c.y/TS)+1)*TS;c.vy=0}
+    if(playing&&!c.stun&&c.fuse==null&&c.x<P.x+P.w&&c.x+8>P.x&&c.y+6>P.y&&c.y<P.y+P.h){hurt(c.dmg,c.x+4,c.y);c.stun=1;c.vx=-Math.sign(dx||1)*60}}
+  crawlers=crawlers.filter(c=>!c.dead);
+  for(const s of spits){s.vy+=120*dt;s.x+=s.vx*dt;s.y+=s.vy*dt;s.l+=dt;
+    if(solidAt(Math.floor(s.x/TS),Math.floor(s.y/TS))||s.l>3){s.dead=true;burst(s.x,s.y,5,["#ff2bd6","#ffd400"],50,150,.3);continue}
+    if(playing&&s.x>P.x-1&&s.x<P.x+P.w+1&&s.y>P.y&&s.y<P.y+P.h){s.dead=true;hurt(s.dmg,s.x-s.vx,s.y)}
+    if(rng()<.5)parts.push({x:s.x,y:s.y,vx:0,vy:-8,g:0,l:.2,c:"#ffd400",s:1})}
+  spits=spits.filter(s=>!s.dead);
+}
+function drawCrawlers(cx,cy,step){
+  for(const c of crawlers){const X=Math.round(c.x-cx),Y=Math.round(c.y-cy);if(X<-12||X>VW+12||Y<-12||Y>VH+12)continue;
+    if(c.burrow){ctx.fillStyle=(step%2)?TAN:BROWN;ctx.fillRect(X+1+(step%3),Y+2,2,2);ctx.fillRect(X+5-(step%2),Y+4,2,1);continue}
+    const rows=CRAWL_SPR[c.type.id]||CRAWL_SPR.mudling,bob=(c.kind!=="dropper"||!c.cling)&&Math.abs(c.vx)>4&&step%2?-1:0;
+    const flick=c.fuse!=null&&step%2;
+    const cm={B:c.stun>0||flick?"#ff2bd6":c.type.body,E:c.type.eye,D:INK,W:"#fff",Y:"#ffd400"};
+    const gx=c.glitch>0?((step%3)-1)*2:0;
+    for(const [ox,oy] of [[-1,0],[1,0],[0,-1],[0,1]])sprite(ctx,rows,X+ox+gx,Y+oy+bob,c.face<0,WHITE);
+    sprite(ctx,rows,X+gx,Y+bob,c.face<0,cm);
+    if(c.hp<c.max){ctx.fillStyle="#ff2bd6";ctx.fillRect(X,Y-3,Math.max(1,Math.round(8*c.hp/c.max)),1)}}
+  for(const s of spits){const X=Math.round(s.x-cx),Y=Math.round(s.y-cy);ctx.fillStyle=step%2?"#ff2bd6":"#ffd400";ctx.fillRect(X-1,Y-1,3,3);ctx.fillStyle="#fff";ctx.fillRect(X,Y,1,1)}
+}
+
+// The Sandmaw: a giant sand-crawler that wakes in the last 60 m of every level band and guards the
+// floor. It hunts under you, rises through the dirt (dodge the dust column), then hangs exposed: hit
+// its head. Every third cycle it charges along your row. Below half it calls spice mites; below a
+// quarter it gets angry.
+function bossColors(){const th=LV&&levelsOn?LV.themeFor(curLevel):null;return{body:TAN,ring:BROWN,acc:th&&th.id!=="trenches"?th.accent:"#ffd400"}}
+function spawnBoss(band){
+  const st=LV.bossStats(band),hx=P.x+P.w/2,hy=P.y+P.h+7*TS;
+  boss={band,st,hp:st.hp,max:st.hp,state:"hunt",t:0,x:hx,y:hy,cycle:0,flash:0,ex:hx,top:0,row:0,dir:1,mites:0,segs:[],col:bossColors()};
+  for(let i=0;i<st.segments;i++)boss.segs.push({x:hx,y:hy+(i+1)*7});
+  showBanner("WORM SIGN!");addShake(8);Sfx.play("whistle");glitch=.3;
+  if(typeof Multiplayer!=='undefined')Multiplayer.sendEvent({kind:'bossSpawn'});
+  cb.onBoss&&cb.onBoss({state:"spawn",name:st.name,band});
+  setTimeout(()=>{if(boss&&boss.band===band&&mode==="play")showBanner(st.name+" GUARDS THE FLOOR")},2700);
+}
+function bossMove(b,tx,ty,sp,dt){const dx=tx-b.x,dy=ty-b.y,d=Math.hypot(dx,dy)||1,s=Math.min(d,sp*dt);b.x+=dx/d*s;b.y+=dy/d*s}
+function bossCarve(x,y,r){const tx=Math.floor(x/TS),ty=Math.floor(y/TS);
+  for(let yy=ty-r;yy<=ty+r;yy++)for(let xx=tx-r;xx<=tx+r;xx++){if(xx<1||xx>W-2||yy<=FLOOR)continue;const t=tile(xx,yy);
+    if(SOLID.has(t)&&t!==T.BED&&t!==T.GATE&&t!==T.POWER&&t!==T.GEM){setTile(xx,yy,T.DUG);fortified.delete(xx+","+yy);if(rng()<.4)burst(xx*TS+6,yy*TS+6,3,[TAN,BROWN],70)}}}
+function bossHurt(n,how){const b=boss;if(!b||b.hp<=0)return;
+  b.hp=Math.max(0,b.hp-n);b.flash=.15;addText(b.x-4,b.y-14,"-"+n,"#ff2bd6");burst(b.x,b.y,10,["#fff","#ff2bd6",TAN],110);addShake(3);
+  cb.onBoss&&cb.onBoss({state:"hit",hp:b.hp,max:b.max});
+  if(b.hp<=0)bossDie()}
+function bossDie(){
+  const b=boss;boss=null;bossDone.add(b.band);
+  b.segs.forEach((s,i)=>setTimeout(()=>{burst(s.x,s.y,22,[TAN,BROWN,"#ffd400","#fff"],130);addShake(6);Sfx.play("boom")},i*90));
+  burst(b.x,b.y,50,[TAN,BROWN,"#ffd400","#fff","#ff2bd6"],170,200,1.1);
+  showBanner(b.st.name+" FELLED");flash=.3;glitch=.5;Sfx.play("power");
+  lives=Math.min(9,lives+3);texts.push({x:P.x-10,y:P.y-12,s:"+3 LIVES","c":"#22e36b",t:0,life:2});hud(true);
+  if(typeof RPG!=='undefined'){RPG.addXp(LV.bossXp(levelsOn?curLevel:1),'boss');if(typeof Multiplayer==='undefined'||!Multiplayer.connected)RPG.tryGearDrop(Math.max(300,maxDepth))}
+  if(typeof Multiplayer!=='undefined')Multiplayer.sendEvent({kind:'bossKill'});
+  if(levelsOn)setTimeout(()=>{if(mode==="play")showBanner("THE FLOOR IS OPEN")},2700);
+  cb.onBoss&&cb.onBoss({state:"dead",name:b.st.name,band:b.band});
+}
+function updateBoss(dt,playing){
+  const depth=curDepth();
+  if(!boss){if(LV&&playing&&depth>=LV.CRAWLER_MIN_DEPTH_M&&LV.inBossZone(depth)){const band=LV.bossBand(depth);if(!bossDone.has(band))spawnBoss(band)}return}
+  const b=boss,st=b.st;
+  if(mode!=="play"){boss=null;return}
+  if(playing&&(!LV.inBossZone(depth,25)||LV.bossBand(depth)!==b.band)){addText(P.x-30,P.y-12,"THE SANDMAW SINKS AWAY","#ff2bd6");boss=null;cb.onBoss&&cb.onBoss({state:"gone"});return}
+  const enr=b.hp<=b.max*.25?.72:1,pcx=P.x+P.w/2,pcy=P.y+P.h/2;
+  b.t+=dt;b.flash=Math.max(0,b.flash-dt);
+  switch(b.state){
+    case "hunt":bossMove(b,pcx+Math.sin(time*1.3)*5*TS,pcy+5*TS,st.speed,dt);
+      if(rng()<.25)burst(b.x+(rng()*10-5),Math.floor(b.y/TS)*TS-4,1,[TAN,BROWN],30);
+      if(b.t>st.lungeEvery*enr){b.t=0;b.cycle++;
+        if(b.cycle%3===0){b.state="warn";b.row=Math.floor((P.y+P.h-1)/TS);b.dir=pcx<W*TS/2?1:-1;Sfx.play("sweep")}
+        else{b.state="tele";b.ex=pcx;texts.push({x:pcx-14,y:P.y-16,s:"WORM SIGN!",c:"#ff2bd6",t:0,life:1});Sfx.play("whistle")}}
+      break;
+    case "tele":bossMove(b,b.ex,pcy+4*TS,st.speed*1.8,dt);addShake(1.5);
+      if(rng()<.8)burst(b.ex+(rng()*16-8),P.y+P.h,1,[TAN,BROWN,"#ffd400"],50);
+      if(b.t>.8*enr){b.t=0;b.state="lunge";b.x=b.ex;b.y=Math.max(b.y,pcy+3*TS);b.top=P.y-2*TS;Sfx.play("boom")}
+      break;
+    case "lunge":b.y-=st.speed*3.4*dt;bossCarve(b.x,b.y,1);
+      if(b.y<=b.top){b.state="exposed";b.t=0;addShake(6);
+        if(b.hp<=b.max*.5&&b.mites<6){const types=LV.crawlersFor(7);for(let i=0;i<2;i++)if(spawnCrawler(depth,types[0],2))b.mites++}}
+      break;
+    case "exposed":b.y+=5*dt;if(b.t>st.exposed*(enr<1?.85:1)){b.state="dive";b.t=0}break;
+    case "dive":b.y+=st.speed*2.2*dt;if(b.t>.6){b.state="hunt";b.t=0}break;
+    case "warn":bossMove(b,b.dir>0?-3*TS:(W+3)*TS,b.row*TS+6,st.speed*3,dt);
+      if(b.t>1.0*enr){b.state="charge";b.t=0;b.x=b.dir>0?-2*TS:(W+2)*TS;b.y=b.row*TS+6;addShake(5)}break;
+    case "charge":b.x+=b.dir*st.speed*2.6*dt;b.y=b.row*TS+6;bossCarve(b.x,b.row*TS+6,0);bossCarve(b.x,b.row*TS-6,0);
+      if(b.x<-4*TS||b.x>(W+4)*TS){b.state="dive";b.t=0}break;
+  }
+  // body follows the head like a rope
+  let px2=b.x,py2=b.y;for(const s of b.segs){const dx=s.x-px2,dy=s.y-py2,d=Math.hypot(dx,dy)||1;if(d>7){s.x=px2+dx/d*7;s.y=py2+dy/d*7}px2=s.x;py2=s.y}
+  const out=b.state!=="hunt"&&b.state!=="tele"&&b.state!=="warn";
+  if(playing&&out&&Math.hypot(pcx-b.x,pcy-b.y)<11)hurt(st.damage,b.x,b.y);
+}
+function bossHeadHit(){ // pickaxe on the head: only while it hangs exposed
+  const b=boss;if(!b)return false;const hx=P.face>0?P.x+P.w+5:P.x-5,hy=P.aim==="down"?P.y+P.h+5:P.aim==="up"?P.y-5:P.y+5;
+  if(Math.hypot(hx-b.x,hy-b.y)>12)return false;
+  if(b.state==="exposed")bossHurt(fx.melee,"melee");else{addText(b.x-8,b.y-12,"CLANG","#16e0ff");Sfx.play("clink")}
+  return true;
+}
+function drawBoss(cx,cy,step){
+  const b=boss;if(!b)return;const out=b.state!=="hunt"&&b.state!=="tele"&&b.state!=="warn",C=b.col;
+  const segs=b.segs;
+  for(let i=segs.length-1;i>=-1;i--){const s=i<0?b:segs[i];const X=Math.round(s.x-cx),Y=Math.round(s.y-cy),r=i<0?8:Math.max(4,7-Math.floor(i/3));
+    if(X<-20||X>VW+20||Y<-20||Y>VH+20)continue;
+    if(!out){ // under the dirt: a dotted shape and dust
+      if((step+i)%2)continue;ctx.fillStyle=C.ring;for(let a=0;a<8;a++){const an=a/8*Math.PI*2+i;ctx.fillRect(X+Math.round(Math.cos(an)*r),Y+Math.round(Math.sin(an)*r),1,1)}continue}
+    for(let yy=-r-1;yy<=r+1;yy++)for(let xx=-r-1;xx<=r+1;xx++){const d=xx*xx+yy*yy;if(d>(r+1)*(r+1))continue;
+      ctx.fillStyle=d>r*r?INK:b.flash>0?"#fff":(bay(xx+40,yy+40)<.3?C.ring:C.body);ctx.fillRect(X+xx,Y+yy,1,1)}
+    if(i>=0&&i%2===0){ctx.fillStyle=C.acc;ctx.fillRect(X-r+1,Y,2*r-1,1)}}
+  if(out){ // the maw: a ring of teeth that opens when it is exposed
+    const X=Math.round(b.x-cx),Y=Math.round(b.y-cy),open=b.state==="exposed"?4:2;
+    ctx.fillStyle=INK;for(let yy=-open;yy<=open;yy++)for(let xx=-open;xx<=open;xx++)if(xx*xx+yy*yy<=open*open)ctx.fillRect(X+xx,Y+yy,1,1);
+    ctx.fillStyle="#fff";for(let a=0;a<10;a++){const an=a/10*Math.PI*2+step*.1;ctx.fillRect(X+Math.round(Math.cos(an)*(open+1)),Y+Math.round(Math.sin(an)*(open+1)),1,1)}
+    if(b.state==="exposed"&&step%2){ctx.fillStyle="#ff2bd6";ctx.fillRect(X-1,Y-1,2,2)}}
+  if(b.state==="tele"&&step%2){const X=Math.round(b.ex-cx),Y0=Math.round(P.y+P.h-cy);ctx.fillStyle="rgba(201,162,122,.55)";ctx.fillRect(X-7,Y0-30,14,30);PixFont.draw(ctx,"!",X-1,Y0-38,"#ff2bd6")}
+  if(b.state==="warn"&&step%2){const Y=b.row*TS+5-cy;PixFont.draw(ctx,b.dir>0?"SANDMAW >>!":"!<< SANDMAW",b.dir>0?3:VW-56,Y-8,"#ff2bd6");ctx.fillStyle="rgba(201,162,122,.6)";for(let x=(step*3)%8;x<VW;x+=8)ctx.fillRect(x,Y-4,3,8)}
+}
+function drawBossBar(){
+  const b=boss;if(!b)return;const w=Math.min(160,VW-40),X=(VW-w)/2|0,Y=30; // top centre: the bottom is where hints + touch controls live
+  const lab=b.st.name+(levelsOn?" · LV "+b.band:"")+(b.hp<=b.max*.25?" · ENRAGED":"");
+  ctx.fillStyle=INK;ctx.fillRect(X-2,Y-9,w+4,16);PixFont.draw(ctx,lab,X,Y-7,"#ffd400");
+  ctx.fillStyle="#fff";ctx.fillRect(X,Y,w,4);ctx.fillStyle=b.flash>0?"#fff":"#ff2bd6";ctx.fillRect(X,Y,Math.round(w*b.hp/b.max),4);
+}
+
+// ---------- teleport + elevator ----------
+const nearElevator=()=>!!P&&P.y+P.h<=FLOOR*TS+1&&P.y>=S*TS-4&&P.x+P.w/2>(ELEV_COL-1)*TS&&P.x+P.w/2<(ELEV_COL+3)*TS;
+function placeAt(depth,x){
+  P.x=x;P.vx=0;P.vy=0;
+  if(depth<=0)P.y=FLOOR*TS-P.h;
+  else{P.y=(FLOOR+depth)*TS-P.h;const x0=Math.floor(P.x/TS),x1=Math.floor((P.x+P.w-.01)/TS),y0=Math.floor(P.y/TS),y1=FLOOR+depth-1;
+    for(let y=y0-1;y<=y1;y++)for(let xx=x0-1;xx<=x1+1;xx++){const t=tile(xx,y);if(y>FLOOR&&t!==T.BED&&SOLID.has(t))setTile(xx,y,T.DUG)}
+    if(!solidAt(x0,y1+1))setTile(x0,y1+1,T.DIRT);if(!solidAt(x1,y1+1))setTile(x1,y1+1,T.DIRT)}
+  crawlers=[];spits=[];if(boss){boss=null;cb.onBoss&&cb.onBoss({state:"gone"})}
+  inv=Math.max(inv,1.5);cam.x=P.x-VW/2;cam.y=P.y-VH*.5;clampCam(true);
+  const d=curDepth(),L=levelOfDepth(d);if(L!==curLevel){curLevel=L;enterLevel(L,false)}
+  if(typeof Multiplayer!=='undefined'&&Multiplayer.connected)Multiplayer.sendState(P.x,P.y,0,0,P.face,0);
+  hud(true);
+}
+function teleportTop(){
+  if(mode!=="play"||dead||!P)return{ok:false,error:"no_run"};
+  if(tpCd>0){addText(P.x-10,P.y-8,Math.ceil(tpCd)+"S","#ff2bd6");return{ok:false,error:"cooldown",cooldown:Math.ceil(tpCd)}}
+  if(curDepth()<=0)return{ok:false,error:"surface"};
+  burst(P.x+4,P.y+5,30,["#16e0ff","#fff",BLUE],120);
+  placeAt(0,(ELEV_COL-2)*TS+2);tpCd=LV?LV.TELEPORT_COOLDOWN_S:90;
+  burst(P.x+4,P.y+5,30,["#16e0ff","#fff",BLUE],120);flash=.25;glitch=.4;Sfx.play("power");showBanner("TELEPORTED TO THE SURFACE");
+  cb.onTeleport&&cb.onTeleport(tpCd);return{ok:true};
+}
+// In-run ride from the lift: keeps lives, gems and multiplier; depth bonuses resume below the stop.
+function rideElevator(depth){
+  if(mode!=="play"||dead||!P)return{ok:false,error:"no_run"};
+  depth=Math.max(0,Math.floor(+depth||0));
+  placeAt(depth,(ELEV_COL+.5)*TS);
+  if(depth>maxDepth){maxDepth=depth;lastDepthXp=depth}
+  depthBonusAt=Math.max(depthBonusAt,(Math.floor(depth/25)+1)*25);
+  flash=.25;Sfx.play("milestone");showBanner(depth?"ELEVATOR · "+(levelsOn?"LEVEL "+curLevel+" · ":"")+depth+"M":"ELEVATOR · SURFACE");
+  return{ok:true};
+}
+function localElevatorStops(){return LV?LV.elevatorStops({bestDepth:maxDepth,maxLevel:levelOfDepth(maxDepth),unlocked:levelsOn}):[{level:1,depth:0,label:"SURFACE"}]}
+function drawElevator(cx,cy,step){
+  const top=S*TS-cy,X=ELEV_COL*TS-cx;if(top>VH||top<-80||X<-40||X>VW+40)return;
+  // headframe + cage
+  ctx.fillStyle=BROWN;ctx.fillRect(X-2,top-26,2,50);ctx.fillRect(X+24,top-26,2,50);ctx.fillRect(X-4,top-28,32,3);
+  ctx.fillStyle=INK;ctx.fillRect(X+11,top-25,2,2);ctx.fillRect(X+12,top-23,1,12);
+  const bob=(step>>2)%2;ctx.fillStyle=BLUE;ctx.fillRect(X+3,top-11+bob,18,34);ctx.fillStyle="#fff";ctx.fillRect(X+5,top-9+bob,14,30);
+  ctx.fillStyle=BLUE;for(let k=0;k<14;k+=3)ctx.fillRect(X+5+k,top-9+bob,1,30);
+  ctx.fillStyle=step%6?"#22e36b":"#fff";ctx.fillRect(X+20,top-4,2,2);
+  const lab="LIFT",w=PixFont.width(lab)+6,sx=X+12-w/2|0;ctx.fillStyle=BLUE;ctx.fillRect(sx,top-37,w,9);PixFont.draw(ctx,lab,sx+3,top-35,"#fff");
+  if(nearElevator()&&mode==="play"&&step%2===0){ctx.fillStyle="#ff2bd6";ctx.fillRect(sx-2,top-38,w+4,1);ctx.fillRect(sx-2,top-28,w+4,1)}
 }
 
 // ---------- digging ----------
@@ -256,9 +536,10 @@ function digTarget(){
   return[Math.floor((P.face>0?P.x+P.w+2:P.x-2)/TS),ty];
 }
 function meleeHit(){
-  if(!rats.length)return false;
+  if(bossHeadHit())return true;
+  if(!crawlers.length)return false;
   const hx=P.face>0?P.x+P.w:P.x-12,hy=P.y-2,dn=P.aim==="down",up=P.aim==="up";
-  for(const rt of rats){if(rt.hp<=0)continue;
+  for(const rt of crawlers){if(rt.hp<=0||rt.burrow)continue;
     const inBox=dn?(rt.x+8>P.x-3&&rt.x<P.x+P.w+3&&rt.y>P.y&&rt.y<P.y+P.h+12):up?(rt.x+8>P.x-3&&rt.x<P.x+P.w+3&&rt.y+6>P.y-12&&rt.y<P.y):(rt.x+8>hx&&rt.x<hx+12&&rt.y+6>hy&&rt.y<P.y+P.h+2);
     if(inBox){rt.hp-=fx.melee;rt.vx=(P.face||1)*80;rt.vy=-90;rt.stun=.35;burst(rt.x+4,rt.y+3,6,["#ff2bd6","#fff",INK],80);addText(rt.x-2,rt.y-6,"-"+fx.melee,"#ff2bd6");Sfx.play("clink");addShake(2);return true}}
   return false;
@@ -270,6 +551,7 @@ function dig(){
   const hx=x*TS+6,hy=y*TS+6;
   if(!SOLID.has(t)){Sfx.play("dig",1);return}
   if(t===T.BED){Sfx.play("clink");burst(hx,hy,4,["#fff","#16e0ff"],60);return}
+  if(t===T.GATE&&boss){Sfx.play("clink");burst(hx,hy,4,[TAN,"#ffd400"],60);if(!texts.some(q=>q.guard))texts.push({x:hx-40,y:hy-10,s:"SANDMAW GUARDS THE FLOOR",c:"#ff2bd6",t:0,life:1.4,guard:true});return}
   const soft=t===T.DIRT||t===T.CLAY||t===T.GEM;
   hp[y][x]=Math.max(0,hp[y][x]-(fx.softDouble&&soft?2:1));
   if(fx.oneShot&&t!==T.GATE&&t!==T.UXB&&hp[y][x]>0&&rng()<fx.oneShot){hp[y][x]=0;addText(hx-8,hy-12,"CRACK!","#16e0ff")}
@@ -457,36 +739,10 @@ function update(dt){
     if(mode==="play"&&f.vy>40&&f.x<P.x+P.w&&f.x+TS>P.x&&f.y+TS>P.y+2&&f.y<P.y+P.h){f.dead=true;hurt(1,f.x+6,f.y);burst(f.x+6,f.y+6,20,[BLUE,"#fff",INK],110)}
   }
   falling=falling.filter(f=>!f.dead);
-  // tunnel raiders (level 2+): burrow out of the wall a few tiles from the trencher, chase along
-  // the row and gnaw through dirt to get at you. Timber (Engineering) slows them down.
-  if(deep&&DL.enemyCount>0){timers.rat=(timers.rat??3)-dt;
-    if(timers.rat<=0){timers.rat=Math.max(1.2,6-.4*(curLevel-2))+rng()*2;
-      if(playing&&rats.length<Math.min(12,DL.enemyCount))for(let k=0;k<10;k++){
-        const pr=Math.floor((P.y+P.h-1)/TS),side=rng()<.5?-1:1,rx=Math.floor((P.x+4)/TS)+side*(6+Math.floor(rng()*5)),ry=pr;
-        if(rx<1||rx>W-2||levelOfRow(ry)!==curLevel)continue;const t=tile(rx,ry);if(t===T.BED||t===T.GATE||t===T.TIMBER)continue;
-        if(SOLID.has(t))setTile(rx,ry,T.DUG);
-        rats.push({x:rx*TS+2,y:ry*TS+6,vx:0,vy:0,hp:DL.enemyHp,max:DL.enemyHp,face:-side,stun:.6,dmg:DL.enemyDamage,spd:DL.enemySpeed,gnaw:0});
-        burst(rx*TS+6,ry*TS+6,12,[BROWN,TAN,"#ff2bd6"],90);addText(rx*TS-8,ry*TS-6,"RAIDER!","#ff2bd6");break}}}
-  for(const rt of rats){
-    if(rt.hp<=0){rt.dead=true;burst(rt.x+4,rt.y+3,14,["#ff2bd6",INK,"#fff"],110);addText(rt.x-4,rt.y-8,"RAIDER DOWN","#ff2bd6");continue}
-    rt.stun=Math.max(0,rt.stun-dt);
-    const dx=P.x-rt.x,dy=P.y+P.h-(rt.y+6);
-    const chase=playing&&Math.abs(dy)<2.5*TS&&Math.abs(dx)<14*TS;
-    if(!rt.stun&&playing){const dir=chase?Math.sign(dx)||1:rt.face;rt.face=dir;rt.vx=dir*rt.spd}
-    else rt.vx*=.9;
-    rt.vy=Math.min(240,rt.vy+520*dt);
-    const nx=rt.x+rt.vx*dt,fy=Math.floor((rt.y+3)/TS),fx2=Math.floor((nx+(rt.vx>0?8:0))/TS);
-    if(solidAt(fx2,fy)){
-      if(chase&&!rt.stun){rt.gnaw+=dt;if(rt.gnaw>.8){rt.gnaw=0;const t=tile(fx2,fy);
-        if(t===T.TIMBER){hp[fy][fx2]--;if(hp[fy][fx2]<=0){setTile(fx2,fy,T.DUG);fortified.delete(fx2+","+fy)}burst(fx2*TS+6,fy*TS+6,5,[BROWN,TAN],60)}
-        else if(t!==T.BED&&t!==T.GATE&&t!==T.UXB&&fy>=FLOOR){setTile(fx2,fy,T.DUG);burst(fx2*TS+6,fy*TS+6,6,[BROWN,TAN],70)}
-        else{rt.face=-rt.face}}}
-      else{rt.face=-rt.face;rt.vx=0;if(!solidAt(fx2,fy-1)&&solidAt(Math.floor((rt.x+4)/TS),Math.floor((rt.y+7)/TS)))rt.vy=-150}
-    }else rt.x=nx;
-    rt.y+=rt.vy*dt;const gy=Math.floor((rt.y+6)/TS);if(solidAt(Math.floor((rt.x+4)/TS),gy)&&rt.vy>0){rt.y=gy*TS-6;rt.vy=0}
-    if(Math.abs(rt.y-P.y)>20*TS)rt.dead=true;
-    if(playing&&!rt.stun&&rt.x<P.x+P.w&&rt.x+8>P.x&&rt.y+6>P.y&&rt.y<P.y+P.h){hurt(rt.dmg,rt.x+4,rt.y);rt.stun=1;rt.vx=-Math.sign(dx||1)*60}}
-  rats=rats.filter(r=>!r.dead);
+  // crawlers on every level (scale with depth) + the Sandmaw near each level band's floor
+  updateCrawlers(dt,playing);updateBoss(dt,playing);
+  tpCd=Math.max(0,tpCd-dt);
+  if(playing&&pressed.tele)teleportTop();
   // Medic: patch up over time
   if(playing&&fx.regenEvery&&lives<9){regenT+=dt;if(regenT>=fx.regenEvery){regenT=0;lives++;addText(P.x-4,P.y-8,"+1 +","#22e36b");hud()}}else regenT=0;
   // Engineering: fortify
@@ -499,21 +755,22 @@ function update(dt){
   for(const p of parts){p.vy+=p.g*dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.l-=dt;
     if(p.g&&solidAt(Math.floor(p.x/TS),Math.floor(p.y/TS))){p.vy*=-.3;p.vx*=.6;p.y-=1}}
   parts=parts.filter(p=>p.l>0);if(parts.length>700)parts.splice(0,parts.length-700);
-  for(const t of texts)t.t+=dt;texts=texts.filter(t=>t.t<1.1);
+  for(const t of texts)t.t+=dt;texts=texts.filter(t=>t.t<(t.life||1.1));
   for(const b of booms)b.t+=dt;booms=booms.filter(b=>b.t<.5);
   if(banner){banner.t+=dt;if(banner.t>2.6)banner=null}
   shake*=Math.pow(.004,dt);if(shake<.3)shake=0;
   flash=Math.max(0,flash-dt);glitch=Math.max(0,glitch-dt);
   // bunker hint
-  if(playing){const b=nearBunker();cb.onHint&&cb.onHint(b?("E / ENTER: OPEN "+b.label):null);
-    if(b&&pressed.enter){cb.onOpen&&cb.onOpen(b.id)}}
+  if(playing){const b=nearBunker(),lift=!b&&nearElevator();cb.onHint&&cb.onHint(b?("E / ENTER: OPEN "+b.label):lift?"E / ENTER: RIDE THE LIFT":null);
+    if(b&&pressed.enter){cb.onOpen&&cb.onOpen(b.id)}
+    else if(lift&&pressed.enter){cb.onElevator&&cb.onElevator()}}
   for(const k in pressed)pressed[k]=false;
 }
 function enterLevel(L,down){
   const th=LV?LV.themeFor(L):null;
   if(down&&L>1&&th){const ch=LV.levelChapter(L);showBanner("LEVEL "+L+" · "+th.displayName.toUpperCase());flash=.25;glitch=.5;Sfx.play("milestone");
     setTimeout(()=>{if(curLevel===L&&mode==="play")showBanner(ch.name.toUpperCase()+" CAMPAIGN")},2700)}
-  rats=[];timers.rat=4;
+  crawlers=[];spits=[];timers.crawl=4;
   if(typeof Campaign!=='undefined')Campaign.note('level',0,L);
   cb.onLevelEnter&&cb.onLevelEnter(L,th,down);hud(true);
 }
@@ -553,7 +810,7 @@ function draw(){
       // crack overlay
       if(SOLID.has(t)&&hp[y]&&hp[y][x]<hpFor(t,y)&&hp[y][x]>0){ctx.fillStyle="#fff";ctx.fillRect(X+3,Y+4,1,4);ctx.fillRect(X+4,Y+7,3,1);ctx.fillRect(X+7,Y+3,1,4)}
     }}
-  drawTrenchDecor(cx,cy,step);
+  drawTrenchDecor(cx,cy,step);drawElevator(cx,cy,step);
   // seam labels
   for(const s of seams){if(s.left<=0)continue;const X=s.x*TS-cx,Y=s.y*TS-cy;if(Y<-20||Y>VH+20)continue;
     const lab="$"+s.ticker;const w=PixFont.width(lab)+4;const lx=X+18-w/2;
@@ -566,8 +823,8 @@ function draw(){
     sprite(ctx,[".#.","###","###","#m#","###","d.d"],X-1,Y-3,false,CM);
     if(step%2===0){const gy=S*TS-cy;ctx.fillStyle="#ff2bd6";ctx.fillRect(X-4,gy-1,9,1);ctx.fillRect(X,gy-5,1,9);ctx.fillRect(X-3,gy-4,1,1);ctx.fillRect(X+3,gy-4,1,1)}}
   drawOtherPlayers(cx,cy,step);
-  for(const rt of rats){const X=Math.round(rt.x-cx),Y=Math.round(rt.y-cy);sprite(ctx,RAT,X,Y,rt.face<0,{...CM,"#":rt.stun?"#ff2bd6":INK});
-    if(rt.hp<rt.max){ctx.fillStyle="#ff2bd6";ctx.fillRect(X,Y-3,Math.max(1,Math.round(8*rt.hp/rt.max)),1)}}
+  drawBoss(cx,cy,step);
+  drawCrawlers(cx,cy,step);
   if(mode==="play"&&curLevel>1)drawDark(cx,cy,step);
   drawPlayer(cx,cy,step);
   // bullets
@@ -588,7 +845,7 @@ function draw(){
   // particles
   for(const p of parts){ctx.fillStyle=p.c;ctx.fillRect(Math.round(p.x-cx),Math.round(p.y-cy),p.s,p.s)}
   // floating texts
-  for(const t of texts){const Y=Math.round(t.y-cy-t.t*16),X=Math.round(t.x-cx);if(t.t>.8&&step%2)continue;
+  for(const t of texts){const Y=Math.round(t.y-cy-Math.min(t.t,1)*16),X=Math.round(t.x-cx);if(t.t>(t.life||1.1)-.3&&step%2)continue;
     const w=PixFont.width(t.s);ctx.fillStyle="#fff";ctx.fillRect(X-1,Y-1,w+2,7);PixFont.draw(ctx,t.s,X,Y,t.c)}
   // ambient glitch speckles (stepped, low fps)
   for(let i=0;i<7;i++){const h=hash2(step,i,77);const h2=hash2(i,step,78);ctx.fillStyle=SPK[(h*97|0)%4];ctx.fillRect((h*VW)|0,(h2*VH)|0,1,1)}
@@ -596,6 +853,7 @@ function draw(){
   if(banner){const s=banner.s,sc=VW>300?2:1;const w=PixFont.width(s,sc);const X=(VW-w)/2|0,Y=(VH*.3)|0;
     if(!(banner.t>2.2&&step%2)){ctx.fillStyle=BLUE;ctx.fillRect(X-8,Y-6,w+16,5*sc+12);ctx.fillStyle="#fff";ctx.fillRect(X-6,Y-4,w+12,1);ctx.fillRect(X-6,Y+5*sc+4,w+12,1);
       PixFont.draw(ctx,s,X+(step%3===0?1:0),Y,"#fff",sc)}}
+  if(mode==="play")drawBossBar();
   if(flash>0){ctx.fillStyle="rgba(255,255,255,"+Math.min(.8,flash*5)+")";ctx.fillRect(0,0,VW,VH)}
   if(inv>0&&mode==="play"&&!dead&&step%2){ctx.fillStyle="rgba(255,43,214,.06)";ctx.fillRect(0,0,VW,VH)}
   if(glitch>0){for(let i=0;i<5;i++){const y=(Math.random()*VH)|0,h=2+((Math.random()*10)|0),dx=((Math.random()*2-1)*8)|0;ctx.drawImage(cv,0,y,VW,h,dx,y,VW,h)}
@@ -841,7 +1099,7 @@ function frame(now){
   draw();
 }
 function onKey(e,down){
-  const m={ArrowLeft:"left",KeyA:"left",ArrowRight:"right",KeyD:"right",ArrowUp:"up",KeyW:"up",ArrowDown:"down",KeyS:"down",Space:"dig",KeyJ:"dig",KeyE:"enter",Enter:"enter",KeyF:"build",KeyK:"build"};
+  const m={ArrowLeft:"left",KeyA:"left",ArrowRight:"right",KeyD:"right",ArrowUp:"up",KeyW:"up",ArrowDown:"down",KeyS:"down",Space:"dig",KeyJ:"dig",KeyE:"enter",Enter:"enter",KeyF:"build",KeyK:"build",KeyT:"tele"};
   const k=m[e.code];if(!k)return;
   if(e.target&&/INPUT|TEXTAREA/.test(e.target.tagName))return;
   if(mode==="play"&&!paused)e.preventDefault();
@@ -854,7 +1112,8 @@ const Game={
     window.addEventListener("resize",resize);addEventListener("keydown",e=>onKey(e,true));addEventListener("keyup",e=>onKey(e,false));
     addEventListener("blur",()=>{for(const k in keys)keys[k]=false});
     cv.addEventListener("click",e=>{const r=cv.getBoundingClientRect();const x=(e.clientX-r.left)/r.width*VW+cam.x,y=(e.clientY-r.top)/r.height*VH+cam.y;
-      for(const b of bunkers){const top=S*TS;if(x>b.col*TS-8&&x<(b.col+2)*TS+8&&y>top-26&&y<top+24){cb.onOpen&&cb.onOpen(b.id);return}}});
+      for(const b of bunkers){const top=S*TS;if(x>b.col*TS-8&&x<(b.col+2)*TS+8&&y>top-26&&y<top+24){cb.onOpen&&cb.onOpen(b.id);return}}
+      {const top=S*TS;if(x>ELEV_COL*TS-6&&x<(ELEV_COL+2)*TS+6&&y>top-40&&y<top+24){cb.onElevator&&cb.onElevator();return}}});
     requestAnimationFrame(frame)},
   setHotList(l){hotList=l;newRun()},
   // Multiplayer: adopt the room's world seed (regenerates the trench unless a run is in progress)
@@ -874,7 +1133,19 @@ const Game={
   get skillFx(){return fx},
   get level(){return curLevel},
   get runId(){return runId},
-  _debug:{get P(){return P},explode,get state(){return{mult,lives,maxDepth,curLevel,rats:rats.length}},bump,showBanner,hurt,setInv:v=>inv=v,
+  teleportTop,
+  rideElevator,
+  nearElevator,
+  elevatorStops:localElevatorStops,
+  get teleportCooldown(){return Math.ceil(tpCd)},
+  get boss(){return boss?{name:boss.st.name,hp:boss.hp,max:boss.max,band:boss.band,state:boss.state}:null},
+  _debug:{get P(){return P},explode,get state(){return{mult,lives,maxDepth,curLevel,crawlers:crawlers.length,boss:boss&&{hp:boss.hp,max:boss.max,state:boss.state},bossDone:[...bossDone],tpCd}},bump,showBanner,hurt,setInv:v=>inv=v,
+    // screenshot / test helpers
+    spawnCrawler(id){const all=LV?Object.values(LV.CRAWLERS).flat():[CRAWL_FALLBACK];const ty=all.find(c=>c.id===id)||all[0];return spawnCrawler(curDepth(),ty,2)},
+    crawlers:()=>crawlers.map(c=>({id:c.type.id,kind:c.kind,x:c.x,y:c.y,hp:c.hp})),
+    spawnBoss(){if(LV&&!boss)spawnBoss(LV.bossBand(curDepth()))},
+    bossState(st,t){if(boss){boss.state=st;boss.t=t||0;if(st==="exposed"){boss.x=P.x+P.w/2+(P.face>0?18:-18);boss.y=P.y+2}}},
+    bossHurt,setTp:v=>tpCd=v,
     // preview/screenshot helper: put the trencher at a depth in an open pocket
     goDepth(d){const y=(FLOOR+d)*TS-P.h;P.y=y;P.vy=0;const tx=Math.floor((P.x+4)/TS);for(let r=FLOOR+d-2;r<FLOOR+d;r++){const t=tile(tx,r);if(t!==T.BED)setTile(tx,r,T.DUG)}
       if(!solidAt(tx,FLOOR+d))setTile(tx,FLOOR+d,T.DIRT);clampCam(true)},

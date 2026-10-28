@@ -1,7 +1,7 @@
 // Wiring: loader, navigation, panels, HUD, touch controls, mini-app + haptics + RPG + multiplayer.
 (function(){
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
-const TITLES={hot:"HOT LIST",calls:"CALLS",callers:"CALLERS",about:"ABOUT",inventory:"GEAR",skills:"SKILLS",leaderboard:"RANKS",campaign:"CAMPAIGN",events:"EVENTS",squad:"SQUAD",world:"WORLD MAP"};
+const TITLES={hot:"HOT LIST",calls:"CALLS",callers:"CALLERS",about:"ABOUT",inventory:"GEAR",skills:"SKILLS",leaderboard:"RANKS",campaign:"CAMPAIGN",events:"EVENTS",squad:"SQUAD",world:"WORLD MAP",elevator:"ELEVATOR"};
 let current=null,wasPlaying=false,lastStats=null;
 const touch=matchMedia("(pointer:coarse)").matches||"ontouchstart" in window;
 
@@ -58,9 +58,11 @@ function onLevelEnter(L,theme,down){
   if(!down||L<2)return;
   Haptics.notification('success');
   if(typeof BTSave!=='undefined'&&RPG.isLoggedIn())setTimeout(()=>BTSave.saveNow({quiet:true}),1500);
-  hint(`LEVEL ${L}: ${theme?theme.campaign.toUpperCase()+" CAMPAIGN · ":""}DARKER, HARDER, RAIDERS ABOUT`,6000);
+  hint(`LEVEL ${L}: ${theme?theme.campaign.toUpperCase()+" CAMPAIGN · ":""}DARKER, HARDER, NEW CRAWLERS`,6000);
 }
-Game.init($("#game"),{onHud,onHit,onOver,onLevelEnter,onHint:t=>hint(t),onOpen:id=>openPanel(id)});
+Game.init($("#game"),{onHud,onHit,onOver,onLevelEnter,onHint:t=>hint(t),onOpen:id=>openPanel(id),
+  onElevator:()=>openPanel('elevator'),onCallout:t=>hint(t,3800),onTeleport:()=>paintTp(),
+  onBoss:e=>{if(e.state==='spawn')Haptics.notification('warning');else if(e.state==='dead'){Haptics.notification('success');hint(e.name+' FELLED · +3 LIVES · BOSS XP',4000)}}});
 
 async function start(){
   $("#title").classList.add("hidden");$("#over").classList.add("hidden");$("#hud").classList.remove("hidden");
@@ -251,6 +253,9 @@ function openPanel(id){
   }else if(id==='world'){
     $("#panelBody").innerHTML=typeof WorldMap!=='undefined'?WorldMap.render():'<p class="note">Map loading…</p>';
     if(typeof WorldMap!=='undefined')WorldMap.mount();
+  }else if(id==='elevator'){
+    $("#panelBody").innerHTML=renderElevator(null);
+    loadElevatorStops();
   }else{
     $("#panelBody").innerHTML=BT.render(id);
   }
@@ -612,4 +617,55 @@ if($("#rosterBtn")){
   $("#rosterBtn").onclick=()=>{$("#rosterPanel").classList.toggle("hidden");Haptics.selection()};
 }
 Multiplayer.onRoster(list=>renderRoster(list));
+
+// ---------- teleport + elevator ----------
+// ⇧ SURFACE: teleport back to the trench (T key), 90 s cooldown. The LIFT at the east end of the
+// trench rides to the top of any level you have reached (stops come from your saved profile; with
+// levels locked it is level 1 shaft stops only). From the title / game-over screen a ride starts a
+// fresh run at the stop (server writes it as your save).
+function paintTp(){const b=$("#tpBtn");if(!b)return;const cd=Game.teleportCooldown;b.classList.toggle("cool",cd>0);b.textContent=cd>0?"⇧ "+cd+"S":"⇧ SURFACE"}
+setInterval(()=>{if(Game.mode==="play")paintTp()},500);
+$("#tpBtn").onclick=e=>{e.stopPropagation();Haptics.selection();const r=Game.teleportTop();
+  if(r.ok)hint("TELEPORTED · WALK EAST TO THE LIFT TO RIDE DOWN",3500);else if(r.error==="cooldown")hint("TELEPORT RECHARGING · "+r.cooldown+"S",1500);else if(r.error==="surface")hint("ALREADY AT THE SURFACE",1200);paintTp()};
+let elevStops=null,elevBusy=false;
+function elevMerge(a,b){const m=new Map();for(const s of [...(a||[]),...(b||[])])if(!m.has(s.depth))m.set(s.depth,s);return [...m.values()].sort((x,y)=>x.depth-y.depth)}
+async function loadElevatorStops(){
+  let server=null;
+  if(RPG.isLoggedIn()){try{const token=await RPG.getAuthToken();
+    if(token){const r=await fetch(BT_CONFIG.serverUrl+'/api/elevator',{headers:{Authorization:'Bearer '+token}});const j=await r.json().catch(()=>null);if(j&&Array.isArray(j.stops))server=j.stops}}catch(e){}}
+  const local=Game.mode==="play"?Game.elevatorStops():[{level:1,depth:0,label:"SURFACE"}];
+  elevStops=elevMerge(server,local);
+  if(current==='elevator')$("#panelBody").innerHTML=renderElevator(elevStops);
+}
+function renderElevator(stops){
+  const inRun=Game.mode==="play",atLift=inRun&&Game.nearElevator(),locked=!(typeof BTSave!=='undefined'&&BTSave.config.levelsUnlocked);
+  if(!stops)return '<p class="note">Calling the lift…</p>';
+  const can=!inRun||atLift;
+  let h='<div class="elev">';
+  h+='<p class="note">'+(inRun?(atLift?'Pick a stop. You keep your lives, gems and multiplier; depth bonuses pick up below the stop.':'Walk to the <b>LIFT</b> at the east end of the trench to ride. Deep down? Use <b>⇧ SURFACE</b> (T) to teleport up first.')
+    :(RPG.isLoggedIn()?'Start a fresh run at any stop you have reached.':'Log in to ride to the levels you have reached. Guests start at the surface.'))+'</p>';
+  h+='<div class="elev-stops">';
+  for(const s of stops){const lv=locked?'':'<i>LV '+s.level+'</i>';
+    h+='<button type="button" class="elev-stop" data-elev="'+(s.depth|0)+'"'+(can?'':' disabled')+'><b>'+escHtml(s.label)+'</b>'+lv+'<span>'+(s.depth|0)+'M</span></button>'}
+  h+='</div>';
+  if(locked)h+='<p class="note small">Levels 2+ are still sealed, so the shaft only runs through level 1 for now.</p>';
+  return h+'</div>';
+}
+$("#panelBody").addEventListener("click",async e=>{
+  const b=e.target.closest&&e.target.closest("[data-elev]");if(!b||b.disabled||elevBusy)return;
+  const depth=+b.dataset.elev;Haptics.selection();
+  if(Game.mode==="play"){if(!Game.nearElevator())return;closePanel();Game.rideElevator(depth);
+    if(typeof BTSave!=='undefined'&&RPG.isLoggedIn())setTimeout(()=>BTSave.saveNow({quiet:true,http:true}),600);return}
+  if(depth===0||!RPG.isLoggedIn()){closePanel();start();return}
+  elevBusy=true;b.textContent='RIDING…';
+  try{const token=await RPG.getAuthToken();
+    const r=await fetch(BT_CONFIG.serverUrl+'/api/elevator',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({depth,sector:Multiplayer.room})});
+    const j=await r.json().catch(()=>null);
+    if(j&&j.ok&&j.save){closePanel();$("#title").classList.add("hidden");$("#over").classList.add("hidden");$("#hud").classList.remove("hidden");
+      if(touch)$("#touch").classList.remove("hidden");Game.startFrom(j.save);updateRpgHud();if(typeof BTSave!=='undefined')BTSave.fetchSave();hint("ELEVATOR · "+j.stop.label,3500)}
+    else hint("LIFT JAMMED · "+((j&&j.error)||'offline').toUpperCase(),2500);
+  }catch(err){hint("LIFT OFFLINE",2000)}
+  elevBusy=false;
+});
+$$("#elevBtn,#overElevBtn").forEach(b=>b.onclick=()=>{Haptics.selection();openPanel('elevator')});
 })();

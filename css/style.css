@@ -512,3 +512,16 @@ html.tg-miniapp input,html.tg-miniapp textarea{-webkit-user-select:text;user-sel
 .sk-foot button{font-family:"PS2P";font-size:7px;padding:6px 8px;border:2px solid var(--blue);background:#fff;color:var(--blue);cursor:pointer}
 @media (max-width:560px){.sk-tier,.sk-tier-1{grid-template-columns:1fr;padding:0}}
 .level-divider{font-size:9px;padding:10px 0 6px;margin:14px 0 8px;border-top:2px dashed var(--blue)}
+
+/* teleport + elevator */
+.tp-btn{top:130px}
+.tp-btn.cool{color:#ff2bd6;border-color:#ff2bd6;box-shadow:2px 2px 0 #ff2bd6}
+@media (max-width:560px){.tp-btn{top:auto;bottom:180px}}
+.elev-stops{display:flex;flex-direction:column;gap:8px;margin:6px 0 14px}
+.elev-stop{display:flex;align-items:center;gap:10px;font-family:"PS2P";font-size:10px;text-align:left;border:2px solid var(--blue);background:#fff;color:var(--blue);padding:10px 12px;cursor:pointer;box-shadow:3px 3px 0 var(--blue)}
+.elev-stop b{flex:1;font-weight:normal}
+.elev-stop i{font-style:normal;font-size:8px;background:var(--blue);color:#fff;padding:3px 5px}
+.elev-stop span{font-size:8px;opacity:.8}
+.elev-stop:hover:not([disabled]){background:var(--blue);color:#fff}
+.elev-stop[disabled]{opacity:.45;cursor:not-allowed}
+.note.small{font-size:15px}
