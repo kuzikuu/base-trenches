@@ -366,11 +366,14 @@ button.ghost{background:#fff;color:var(--blue);border:2px solid var(--blue);font
 .roster-row{display:flex;gap:8px;align-items:center;font-family:"PS2P";font-size:8px;padding:4px 0;border-bottom:2px dotted rgba(0,82,255,.25)}
 .roster-row .dot{width:8px;height:8px;background:var(--g);display:block}
 .roster-row .dot.idle{background:var(--y)}
-.event-banner{position:absolute;top:8px;left:50%;transform:translateX(-50%);background:var(--blue);color:#fff;font-family:"PS2P";font-size:8px;padding:6px 10px;pointer-events:none;z-index:4;max-width:90%;text-align:center}
+.event-banner{position:absolute;top:38px;left:50%;transform:translateX(-50%);background:var(--blue);color:#fff;font-family:"PS2P";font-size:8px;padding:6px 10px;pointer-events:none;z-index:4;max-width:90%;text-align:center}
 .event-banner b{display:block;margin:4px 0}
-.event-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.event-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));gap:12px}
 .event-card{border:2px solid var(--blue);padding:12px;background:#fff}
 .event-card.live{box-shadow:6px 6px 0 var(--blue)}
+.event-card h3{font-size:12px;line-height:1.5;margin:8px 0;overflow-wrap:anywhere}
+.event-lb li span{margin-left:auto}
+.event-lb li b{margin-right:8px}
 .event-type{font-family:"PS2P";font-size:8px;background:var(--blue);color:#fff;display:inline-block;padding:3px 6px}
 .event-when,.event-count{font-family:"PS2P";font-size:8px;margin:6px 0}
 .event-acts a{font-family:"PS2P";font-size:8px;border:2px solid var(--blue);padding:5px 6px;text-decoration:none}
@@ -386,6 +389,7 @@ button.ghost{background:#fff;color:var(--blue);border:2px solid var(--blue);font
 .mission-list{display:flex;flex-direction:column;gap:4px}
 .mission{display:grid;grid-template-columns:16px 1fr;gap:2px 8px;font-size:17px}
 .mission .mtitle{font-family:"PS2P";font-size:8px}
+.mission .mdesc{grid-column:2}
 .mission.boss .mtitle{color:var(--m)}
 .mission.done{opacity:.7}
 .mission .tick{font-family:"PS2P";font-size:10px}
@@ -403,6 +407,6 @@ button.ghost{background:#fff;color:var(--blue);border:2px solid var(--blue);font
 @media (max-width:560px){
   .roster-btn{top:auto;bottom:150px;left:8px;transform:none}
   .roster-panel{top:auto;bottom:180px;left:8px;transform:none}
-  .event-banner{top:auto;bottom:210px;left:8px;transform:none;text-align:left}
+  .event-banner{top:172px;bottom:auto;left:8px;right:8px;max-width:none;transform:none;text-align:left}
   .dugout{flex-direction:column;gap:6px}
 }

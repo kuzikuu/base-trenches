@@ -364,14 +364,18 @@ async function renderSquad(){
   if(create)create.onsubmit=async e=>{
     e.preventDefault();
     const fd=new FormData(create);
-    await fetch(base+'/api/squads',{method:'POST',headers:await squadAuthHeaders(),body:JSON.stringify({name:fd.get('name'),objective:fd.get('objective'),profileId:profile&&profile.id})});
+    const r=await fetch(base+'/api/squads',{method:'POST',headers:await squadAuthHeaders(),body:JSON.stringify({name:fd.get('name'),objective:fd.get('objective'),profileId:profile&&profile.id})}).catch(()=>null);
+    const d=r?await r.json().catch(()=>({})):{error:'offline'};
+    if(!r||!r.ok||d.success===false)hint(String(d.error||'squad error').toUpperCase());
     renderSquad();
   };
   const join=$("#squadJoin");
   if(join)join.onsubmit=async e=>{
     e.preventDefault();
     const fd=new FormData(join);
-    await fetch(base+'/api/squads/join',{method:'POST',headers:await squadAuthHeaders(),body:JSON.stringify({code:fd.get('code'),profileId:profile&&profile.id})});
+    const r=await fetch(base+'/api/squads/join',{method:'POST',headers:await squadAuthHeaders(),body:JSON.stringify({code:fd.get('code'),profileId:profile&&profile.id})}).catch(()=>null);
+    const d=r?await r.json().catch(()=>({})):{error:'offline'};
+    if(!r||!r.ok||d.success===false)hint(String(d.error||'squad error').toUpperCase());
     renderSquad();
   };
   const leave=$("#squadLeave");
