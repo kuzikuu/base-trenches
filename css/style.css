@@ -298,21 +298,41 @@ body{padding-top:var(--safe-top);padding-bottom:var(--safe-bottom);padding-left:
 .online-pill{font-family:"PS2P";font-size:9px;background:#fff;border:2px solid var(--blue);padding:3px 6px;color:var(--blue)}
 .online-pill span{color:var(--g)}
 
+/* Chat log (last 5 messages, fading) */
+.chat-log{position:absolute;top:70px;right:12px;width:180px;pointer-events:none;display:flex;flex-direction:column;gap:3px}
+.chat-log-line{font-family:"PS2P";font-size:8px;background:rgba(255,255,255,0.9);border:2px solid var(--blue);padding:4px 6px;animation:chatFade 6s forwards;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.chat-log-line .chat-name{color:var(--blue);font-weight:bold}
+.chat-log-line .chat-msg{color:#333}
+.chat-log-line.own .chat-name{color:#ff2bd6}
+@keyframes chatFade{0%{opacity:1}70%{opacity:1}100%{opacity:0}}
+
 /* Chat input box */
-.chat-box{position:absolute;bottom:40px;right:12px;display:flex;gap:4px;align-items:center;pointer-events:auto}
-.chat-emotes{display:flex;gap:2px}
-.chat-emotes button{font-size:14px;width:28px;height:28px;border:2px solid var(--blue);background:#fff;cursor:pointer;padding:0}
+.chat-box{position:absolute;bottom:40px;right:12px;display:flex;gap:6px;align-items:center;pointer-events:auto}
+.chat-emotes{display:flex;gap:4px}
+.chat-emotes button{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:44px;height:36px;border:3px solid var(--blue);background:#fff;cursor:pointer;padding:2px 6px;transition:all .15s}
 .chat-emotes button:hover{background:var(--blue);color:#fff}
+.chat-emotes button:hover .emote-text{color:#fff}
 .chat-emotes button:active{transform:scale(.95)}
-#chatInput{font-family:"PS2P";font-size:9px;width:100px;height:28px;border:2px solid var(--blue);padding:0 6px;outline:none}
-#chatInput:focus{box-shadow:0 0 0 2px rgba(0,82,255,.3)}
-#chatSend{font-family:"PS2P";font-size:11px;width:28px;height:28px;border:2px solid var(--blue);background:var(--blue);color:#fff;cursor:pointer;padding:0}
+.chat-emotes button.cooldown{opacity:.5;pointer-events:none;position:relative}
+.chat-emotes button.cooldown::after{content:'';position:absolute;bottom:0;left:0;height:3px;background:var(--m);animation:cooldownBar 2s linear forwards}
+@keyframes cooldownBar{from{width:100%}to{width:0}}
+.emote-icon{font-size:14px;line-height:1}
+.emote-text{font-family:"PS2P";font-size:8px;color:var(--blue);margin-top:1px}
+#chatInput{font-family:"PS2P";font-size:9px;width:90px;height:36px;border:3px solid var(--blue);padding:0 8px;outline:none}
+#chatInput:focus{box-shadow:0 0 0 3px rgba(0,82,255,.3)}
+#chatSend{font-family:"PS2P";font-size:12px;width:36px;height:36px;border:3px solid var(--blue);background:var(--blue);color:#fff;cursor:pointer;padding:0}
 #chatSend:hover{background:#003acc}
 #chatSend:active{transform:scale(.95)}
+#chatSend.cooldown{opacity:.5;pointer-events:none}
+
 @media (max-width:560px){
-  .chat-box{bottom:110px;right:8px;flex-direction:column;align-items:flex-end}
-  .chat-emotes{order:2}
-  #chatInput{width:90px;font-size:8px}
-  .chat-emotes button{width:24px;height:24px;font-size:12px}
-  #chatSend{width:24px;height:24px;font-size:9px}
+  .chat-log{top:auto;bottom:180px;right:8px;width:150px}
+  .chat-log-line{font-size:7px;padding:3px 5px}
+  .chat-box{bottom:120px;right:8px;flex-direction:column;align-items:flex-end;gap:4px}
+  .chat-emotes{order:2;gap:3px}
+  .chat-emotes button{min-width:38px;height:32px;border-width:2px}
+  .emote-icon{font-size:12px}
+  .emote-text{font-size:7px}
+  #chatInput{width:80px;font-size:8px;height:32px;border-width:2px}
+  #chatSend{width:32px;height:32px;font-size:10px;border-width:2px}
 }

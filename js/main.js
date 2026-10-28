@@ -112,16 +112,43 @@ Multiplayer.onStatus((status)=>{
   }
 });
 
-// Chat input + emotes
+// Chat input + emotes with cooldown and chat log
 let lastChatSent=0;
 const CHAT_RATE_LIMIT=2000; // respect server 2s limit
+const chatLogLines=[];
+const MAX_CHAT_LOG=5;
+
+function addChatLog(name,text,own=false){
+  chatLogLines.push({name,text,own,time:Date.now()});
+  if(chatLogLines.length>MAX_CHAT_LOG)chatLogLines.shift();
+  renderChatLog();
+}
+
+function renderChatLog(){
+  const log=$("#chatLog");
+  log.innerHTML=chatLogLines.map(l=>`<div class="chat-log-line ${l.own?'own':''}"><span class="chat-name">${escHtml(l.name)}:</span> <span class="chat-msg">${escHtml(l.text)}</span></div>`).join('');
+}
+
+function applyCooldown(){
+  $$(".chat-emotes button").forEach(btn=>btn.classList.add("cooldown"));
+  $("#chatSend").classList.add("cooldown");
+  setTimeout(()=>{
+    $$(".chat-emotes button").forEach(btn=>btn.classList.remove("cooldown"));
+    $("#chatSend").classList.remove("cooldown");
+  },CHAT_RATE_LIMIT);
+}
+
 function sendChat(text){
   if(!text||!text.trim())return;
   const now=Date.now();
   if(now-lastChatSent<CHAT_RATE_LIMIT){hint("Wait before sending again",1500);return}
   if(!Multiplayer.connected){hint("Offline - can't send chat",1500);return}
-  Multiplayer.sendChat(text.trim());
+  const msg=text.trim();
+  Multiplayer.sendChat(msg);
+  Game.setOwnChat(msg);
+  addChatLog('YOU',msg,true);
   lastChatSent=now;
+  applyCooldown();
   Haptics.selection();
   $("#chatInput").value="";
 }
@@ -129,6 +156,11 @@ $("#chatSend").onclick=()=>sendChat($("#chatInput").value);
 $("#chatInput").onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();sendChat($("#chatInput").value)}};
 $$(".chat-emotes button").forEach(btn=>{
   btn.onclick=()=>sendChat(btn.dataset.emote);
+});
+
+// Listen for incoming chat from others
+Multiplayer.onChat((playerId,name,text)=>{
+  addChatLog(name||'TRENCHER',text,false);
 });
 
 // panels

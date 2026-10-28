@@ -424,6 +424,8 @@ function draw(){
   if(inv>0&&mode==="play"&&!dead&&step%2){ctx.fillStyle="rgba(255,43,214,.06)";ctx.fillRect(0,0,VW,VH)}
   if(glitch>0){for(let i=0;i<5;i++){const y=(Math.random()*VH)|0,h=2+((Math.random()*10)|0),dx=((Math.random()*2-1)*8)|0;ctx.drawImage(cv,0,y,VW,h,dx,y,VW,h)}
     ctx.fillStyle=SPK[(Math.random()*4)|0];for(let i=0;i<30;i++)ctx.fillRect((Math.random()*VW)|0,(Math.random()*VH)|0,2,1)}
+  // Chat bubbles rendered on top of everything
+  if(mode==="play")drawChatBubbles(cx,cy);
 }
 function drawSky(cx,cy,step){
   const gy=S*TS-cy;if(gy<0)return;
@@ -488,6 +490,8 @@ function drawPlayer(cx,cy,step){
 
 // Draw other players (multiplayer ghosts)
 const GHOST_CM={"#":"rgba(0,82,255,0.5)","w":"rgba(255,255,255,0.6)","d":"rgba(11,26,143,0.5)","c":"rgba(22,224,255,0.5)","m":"rgba(255,43,214,0.5)","y":"rgba(255,212,0,0.5)","b":"rgba(138,90,43,0.5)","t":"rgba(201,162,122,0.5)","p":"rgba(201,214,255,0.5)"};
+let ownChatText=null,ownChatTime=0;
+function setOwnChat(text){ownChatText=text;ownChatTime=Date.now()}
 function drawOtherPlayers(cx,cy,step){
   if(typeof Multiplayer==='undefined'||!Multiplayer.connected)return;
   const players=Multiplayer.players;
@@ -513,16 +517,73 @@ function drawOtherPlayers(cx,cy,step){
         PixFont.draw(ctx,"L"+p.level,X+7+tw/2|0,Y-9,"#fff");
       }
     }
-    // Chat bubble
-    if(p.chatText){
-      const ct=p.chatText.length>20?p.chatText.slice(0,19)+'…':p.chatText;
-      const cw=PixFont.width(ct)+6;
-      ctx.fillStyle="#fff";ctx.fillRect(X+5-cw/2|0,Y-22,cw,9);
-      ctx.fillStyle=BLUE;ctx.fillRect(X+5-cw/2|0,Y-22,cw,1);ctx.fillRect(X+5-cw/2|0,Y-14,cw,1);
-      ctx.fillRect(X+5-cw/2|0,Y-22,1,9);ctx.fillRect(X+5+cw/2-1|0,Y-22,1,9);
-      PixFont.draw(ctx,ct.toUpperCase(),X+8-cw/2|0,Y-20,BLUE);
-    }
   });
+}
+
+// Draw chat bubbles above everything (called after all other rendering)
+function drawChatBubbles(cx,cy){
+  const now=Date.now();
+  const bubbles=[];
+  // Other players' bubbles
+  if(typeof Multiplayer!=='undefined'&&Multiplayer.connected){
+    Multiplayer.players.forEach(p=>{
+      if(p.chatText&&p.chatTime&&now-p.chatTime<4000){
+        const age=(now-p.chatTime)/4000;
+        bubbles.push({x:p.x,y:p.y,text:p.chatText,name:p.name,age,own:false});
+      }
+    });
+  }
+  // Own chat bubble
+  if(ownChatText&&now-ownChatTime<4000){
+    const age=(now-ownChatTime)/4000;
+    bubbles.push({x:P.x,y:P.y,text:ownChatText,name:'YOU',age,own:true});
+  }
+  // Draw all bubbles
+  for(const b of bubbles){
+    const X=Math.round(b.x-cx),Y=Math.round(b.y-cy);
+    const txt=(b.text.length>24?b.text.slice(0,23)+'…':b.text).toUpperCase();
+    const tw=PixFont.width(txt);
+    const bw=tw+12,bh=14;
+    // Clamp to screen edges
+    let bx=X+5-bw/2;
+    bx=Math.max(2,Math.min(VW-bw-2,bx));
+    let by=Y-28;
+    by=Math.max(2,by);
+    // Pop-in animation (scale from 0.5 to 1 in first 150ms)
+    const popT=Math.min(1,(now-(b.own?ownChatTime:0))/150);
+    const scale=0.5+0.5*popT;
+    // Fade out in last 500ms
+    const fade=b.age>0.875?1-(b.age-0.875)/0.125:1;
+    ctx.globalAlpha=fade;
+    // Draw bubble with thick border
+    ctx.fillStyle="#fff";
+    ctx.fillRect(bx|0,by|0,bw,bh);
+    ctx.fillStyle=BLUE;
+    // Thick 2px border
+    ctx.fillRect(bx|0,by|0,bw,2);ctx.fillRect(bx|0,(by+bh-2)|0,bw,2);
+    ctx.fillRect(bx|0,by|0,2,bh);ctx.fillRect((bx+bw-2)|0,by|0,2,bh);
+    // Tail pointing down to digger
+    const tailX=(X+5)|0;
+    ctx.fillStyle="#fff";
+    ctx.fillRect(tailX-3,(by+bh)|0,6,3);
+    ctx.fillRect(tailX-2,(by+bh+3)|0,4,2);
+    ctx.fillRect(tailX-1,(by+bh+5)|0,2,1);
+    ctx.fillStyle=BLUE;
+    ctx.fillRect(tailX-3,(by+bh)|0,2,3);ctx.fillRect(tailX+1,(by+bh)|0,2,3);
+    ctx.fillRect(tailX-2,(by+bh+3)|0,1,2);ctx.fillRect(tailX+1,(by+bh+3)|0,1,2);
+    ctx.fillRect(tailX-1,(by+bh+5)|0,1,1);ctx.fillRect(tailX,(by+bh+5)|0,1,1);
+    // Text
+    PixFont.draw(ctx,txt,(bx+6)|0,(by+4)|0,BLUE);
+    // Name badge (small, top-left of bubble)
+    if(b.name){
+      const nm=(b.own?'YOU':b.name.slice(0,8)).toUpperCase();
+      const nw=PixFont.width(nm)+4;
+      ctx.fillStyle=b.own?'#ff2bd6':BLUE;
+      ctx.fillRect((bx-1)|0,(by-6)|0,nw,7);
+      PixFont.draw(ctx,nm,(bx+1)|0,(by-5)|0,'#fff');
+    }
+    ctx.globalAlpha=1;
+  }
 }
 
 // ---------- hud / stats ----------
@@ -575,6 +636,7 @@ const Game={
   // Multiplayer: adopt the room's world seed (regenerates the trench unless a run is in progress)
   setSeed(s){if(sharedSeed===s)return;sharedSeed=s;if(mode!=="play")newRun()},
   applyRemoteDig,
+  setOwnChat,
   start(){Sfx.unlock();newRun();mode="play";paused=false;hud(true)},
   pause(p){paused=p;if(p)for(const k in keys)keys[k]=false},
   get mode(){return mode},

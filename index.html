@@ -63,14 +63,15 @@
       <div class="online-pill" id="online"><span id="onlineCount">0</span> ONLINE</div>
     </div>
     <div id="offlineBadge" class="offline-badge hidden">OFFLINE TRENCH</div>
+    <div id="chatLog" class="chat-log"></div>
     <div id="chatBox" class="chat-box">
       <div class="chat-emotes">
-        <button data-emote="POWER OF 9" aria-label="Power of 9">⚡9</button>
-        <button data-emote="MANIFESTING 589X" aria-label="Manifesting">🎯</button>
-        <button data-emote="LFG" aria-label="LFG">🚀</button>
-        <button data-emote="GM" aria-label="GM">☀️</button>
+        <button data-emote="POWER OF 9" aria-label="Power of 9"><span class="emote-icon">⚡</span><span class="emote-text">9</span></button>
+        <button data-emote="MANIFESTING 589X" aria-label="Manifesting"><span class="emote-icon">🎯</span><span class="emote-text">589X</span></button>
+        <button data-emote="LFG" aria-label="LFG"><span class="emote-icon">🚀</span><span class="emote-text">LFG</span></button>
+        <button data-emote="GM" aria-label="GM"><span class="emote-icon">☀️</span><span class="emote-text">GM</span></button>
       </div>
-      <input type="text" id="chatInput" maxlength="60" placeholder="Say something..." autocomplete="off">
+      <input type="text" id="chatInput" maxlength="60" placeholder="Say..." autocomplete="off">
       <button id="chatSend" aria-label="Send">↵</button>
     </div>
   </div>
