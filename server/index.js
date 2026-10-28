@@ -20,6 +20,7 @@ import {
 import {
   normalizeProgress,
   noteStat,
+  noteLevel,
   completeMission,
   campaignPublic,
   CHAPTERS
@@ -39,6 +40,9 @@ import {
   publicRecruit
 } from './lib/recruits.js';
 import { parseGeo, geoHeader, aggregateGeo } from './lib/geo.js';
+import { levelForDepth, LEVEL_DEPTH_M, MAX_LEVEL } from './lib/levels.js';
+import { normalizeSkills, learn as learnSkill, validateSkills, skillPoints, spentPoints, RESPEC_COOLDOWN_MS } from './lib/skills.js';
+import { sanitizeSave, sanitizeEquipped, normalizeMeta, noteCredit, emptyMeta, deathCheckpoint, SAVE_MIN_GAP_MS } from './lib/save.js';
 
 const CORS_ORIGINS = [
   'https://powerof9base.com',
@@ -86,8 +90,27 @@ function filterProfanity(text) {
   return filtered;
 }
 
+// Extra allowed origins from env (preview only: EXTRA_CORS_ORIGINS="https://a,https://b").
+let EXTRA_ORIGINS = [];
+function setExtraOrigins(env) {
+  const raw = String((env && env.EXTRA_CORS_ORIGINS) || '');
+  EXTRA_ORIGINS = raw ? raw.split(',').map(s => s.trim()).filter(o => /^https?:\/\/[a-z0-9.:-]+$/i.test(o)) : [];
+}
+// Levels 2+ are behind a switch: LEVELS_UNLOCKED="1" (preview) opens them; anything else = level 1 only.
+export function levelsUnlocked(env) {
+  return String((env && env.LEVELS_UNLOCKED) || '').trim() === '1';
+}
+// Preview-only test login so screenshots and smoke tests can save without a real Privy session.
+// Needs BOTH flags, and never applies to the production worker (BT_ENV must be "preview").
+export function previewTestAuth(env) {
+  return !!env && String(env.PREVIEW_TEST_AUTH || '') === '1' && String(env.BT_ENV || '') === 'preview';
+}
+// Max depth (m) a single credited event can add to best_depth. Stops one spoofed position
+// from jumping the record (and therefore the save / level gate) by hundreds of meters.
+const MAX_DEPTH_GAIN_PER_CREDIT = 40;
+
 function corsHeaders(origin) {
-  const allowed = CORS_ORIGINS.includes(origin) ? origin : CORS_ORIGINS[0];
+  const allowed = CORS_ORIGINS.includes(origin) || EXTRA_ORIGINS.includes(origin) ? origin : CORS_ORIGINS[0];
   return {
     'Access-Control-Allow-Origin': allowed,
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
@@ -433,6 +456,7 @@ export class TrenchRoom {
         case 'dig': await this.handleDig(ws, data, attachment); break;
         case 'chat': await this.handleChat(ws, data, attachment); break;
         case 'event': await this.handleGameEvent(ws, data, attachment); break;
+        case 'save': await this.handleSave(ws, data, attachment); break;
         case 'xp':
           // Client XP amounts are ignored. Progression is event-scored.
           break;
@@ -555,6 +579,31 @@ export class TrenchRoom {
       now,
       window: win
     };
+  }
+
+  // Autosave over the socket: the room supplies the last position it saw for this session,
+  // so the client cannot place itself anywhere it has not reported moving to.
+  async handleSave(ws, data, attachment) {
+    if (!attachment.playerId || attachment.bot) return;
+    const profileId = attachment.verifiedProfileId;
+    if (!profileId || profileId.startsWith('guest:') || isBotId(profileId)) {
+      try { ws.send(JSON.stringify({ type: 'saved', ok: false, error: 'login_required' })); } catch (e) {}
+      return;
+    }
+    const now = Date.now();
+    if (now - (attachment.lastSave || 0) < SAVE_MIN_GAP_MS && !(data.snapshot && data.snapshot.dead)) {
+      try { ws.send(JSON.stringify({ type: 'saved', ok: false, error: 'too_soon' })); } catch (e) {}
+      return;
+    }
+    attachment.lastSave = now;
+    ws.serializeAttachment(attachment);
+    const serverPos = Number.isFinite(Number(attachment.y)) && attachment.y !== undefined ? { x: attachment.x, y: attachment.y } : null;
+    const res = await this.env.PROFILES.get(this.env.PROFILES.idFromName(PROFILES_SHARD)).fetch(new Request('http://internal/save', {
+      method: 'POST',
+      body: JSON.stringify({ profileId, input: data.snapshot || {}, serverPos, sector: this.roomName || null })
+    }));
+    const out = await res.json().catch(() => ({ ok: false }));
+    try { ws.send(JSON.stringify({ type: 'saved', ...out })); } catch (e) {}
   }
 
   async handleChat(ws, data, attachment) {
@@ -735,7 +784,15 @@ export class Profiles {
         "ALTER TABLE profiles ADD COLUMN campaign TEXT DEFAULT '{}'",
         'ALTER TABLE profiles ADD COLUMN squad_id TEXT',
         'ALTER TABLE profiles ADD COLUMN migrated_to TEXT',
-        'ALTER TABLE profiles ADD COLUMN privy_did TEXT'
+        'ALTER TABLE profiles ADD COLUMN privy_did TEXT',
+        // Save game + endless levels + skills (patch 0010)
+        'ALTER TABLE profiles ADD COLUMN save_state TEXT',
+        'ALTER TABLE profiles ADD COLUMN save_at INTEGER',
+        "ALTER TABLE profiles ADD COLUMN save_meta TEXT DEFAULT '{}'",
+        "ALTER TABLE profiles ADD COLUMN skills TEXT DEFAULT '{}'",
+        'ALTER TABLE profiles ADD COLUMN skills_reset_at INTEGER',
+        'ALTER TABLE profiles ADD COLUMN max_level INTEGER DEFAULT 1',
+        'CREATE INDEX IF NOT EXISTS idx_max_level ON profiles(max_level DESC, best_depth DESC)'
       ]) {
         try { this.sql.exec(col); } catch (e) {}
       }
@@ -765,6 +822,13 @@ export class Profiles {
     if (path === '/leaderboard') {
       return this.getLeaderboard(url.searchParams.get('type') || 'xp');
     }
+    if (path === '/save') {
+      if (request.method === 'GET') return this.getSave(url.searchParams.get('id'));
+      if (request.method === 'POST') return this.writeSave(await request.json());
+    }
+    if (path === '/skills' && request.method === 'POST') {
+      return this.updateSkills(await request.json());
+    }
     if (path === '/squad') {
       if (request.method === 'GET') {
         const code = url.searchParams.get('code');
@@ -787,9 +851,15 @@ export class Profiles {
   }
 
   rowToProfile(row) {
-    const { secret_hash, ...rest } = row;
+    const { secret_hash, save_state, save_meta, ...rest } = row;
+    const skills = normalizeSkills(JSON.parse(row.skills || '{}'));
     return {
       ...rest,
+      max_level: Math.max(1, row.max_level || 1),
+      skills,
+      skill_points: skillPoints(row.level, row.max_level),
+      skill_points_free: Math.max(0, skillPoints(row.level, row.max_level) - spentPoints(skills)),
+      has_save: !!save_state,
       inventory: JSON.parse(row.inventory || '[]'),
       equipped: JSON.parse(row.equipped || '{}'),
       titles: JSON.parse(row.titles || '[]'),
@@ -801,7 +871,7 @@ export class Profiles {
     const results = this.sql.exec('SELECT * FROM profiles WHERE id = ?', id).toArray();
     if (!results.length) return Response.json({ exists: false });
     const profile = this.rowToProfile(results[0]);
-    return Response.json({ exists: true, profile, campaign: campaignPublic(profile.campaign) });
+    return Response.json({ exists: true, profile, campaign: campaignPublic(profile.campaign, { levelsUnlocked: levelsUnlocked(this.env) }) });
   }
 
   async saveProfile(data) {
@@ -820,7 +890,9 @@ export class Profiles {
     const pfp = typeof data.pfp === 'string' && /^https:\/\//.test(data.pfp) ? data.pfp.slice(0, 512) : (existing[0] && existing[0].pfp) || null;
     const xHandle = sanitizeHandle(data.x_handle || data.xHandle) || (existing[0] && existing[0].x_handle) || null;
     const wallet = sanitizeWallet(data.wallet) || (existing[0] && existing[0].wallet) || null;
-    const equipped = JSON.stringify(data.equipped || (existing[0] ? JSON.parse(existing[0].equipped || '{}') : {}));
+    // Equipped ids must point at gear this profile actually owns (server-owned inventory).
+    const ownInv = existing[0] ? JSON.parse(existing[0].inventory || '[]') : [];
+    const equipped = JSON.stringify(sanitizeEquipped(data.equipped || (existing[0] ? JSON.parse(existing[0].equipped || '{}') : {}), ownInv));
 
     if (existing.length) {
       // Server owns xp / level / depth / inventory / campaign. Client may update identity + equipped.
@@ -854,15 +926,22 @@ export class Profiles {
     if (row.migrated_to) return Response.json({ success: false, error: 'migrated' });
     // Room-scored XP is already capped; mission/boss XP is added below only on completion.
     let add = SERVER_XP_KINDS.has(eventKind) ? 0 : Math.max(0, Math.min(250, Math.floor(Number(xp) || 0)));
-    const newBestDepth = Math.max(row.best_depth || 0, Math.floor(Number(depth) || 0));
+    const prevBest = row.best_depth || 0;
+    const here = Math.max(0, Math.floor(Number(depth) || 0));
+    const newBestDepth = Math.max(prevBest, Math.min(here, prevBest + MAX_DEPTH_GAIN_PER_CREDIT));
+    const unlocked = levelsUnlocked(this.env);
+    // World level of this event: from the (capped) position, never above the deepest verified level.
+    const atLevel = levelForDepth(Math.min(here, newBestDepth), unlocked);
+    const maxLevel = Math.max(row.max_level || 1, levelForDepth(newBestDepth, unlocked));
     let campaign = normalizeProgress(JSON.parse(row.campaign || '{}'));
+    if (unlocked) campaign = noteLevel(campaign, maxLevel);
     let titles = JSON.parse(row.titles || '[]');
     let inventory = JSON.parse(row.inventory || '[]');
     const rewards = [];
 
     if (eventKind === 'depth' || eventKind === 'dig') campaign = noteStat(campaign, 'depth', newBestDepth);
     else if (eventKind === 'survive' || eventKind === 'dodge' || eventKind === 'relic' || eventKind === 'squad' || eventKind === 'boss') {
-      campaign = noteStat(campaign, eventKind, 1);
+      campaign = noteStat(campaign, eventKind, 1, atLevel);
     }
     if (eventKind === 'dig') {
       this.sql.exec('UPDATE profiles SET total_digs = total_digs + 1 WHERE id = ?', profileId);
@@ -893,11 +972,15 @@ export class Profiles {
       inventory.push(gearDrop);
     }
 
+    // Diamonds / power gems the server credited since the last save cap what a save may claim.
+    let meta = normalizeMeta(JSON.parse(row.save_meta || '{}'), row.save_at || row.created_at || Date.now());
+    if (add > 0 && (eventKind === 'diamond' || eventKind === 'power')) meta = noteCredit(meta, eventKind);
+
     this.sql.exec(`
       UPDATE profiles SET xp = ?, level = ?, best_depth = ?, inventory = ?, titles = ?, campaign = ?,
-        name = COALESCE(?, name), updated_at = ? WHERE id = ?
+        name = COALESCE(?, name), updated_at = ?, max_level = ?, save_meta = ? WHERE id = ?
     `, newXp, newLevel, newBestDepth, JSON.stringify(inventory), JSON.stringify(titles),
-      JSON.stringify(campaign), name || null, Date.now(), profileId);
+      JSON.stringify(campaign), name || null, Date.now(), maxLevel, JSON.stringify(meta), profileId);
 
     if (row.squad_id && add > 0) {
       this.sql.exec('UPDATE squads SET xp = xp + ? WHERE id = ?', add, row.squad_id);
@@ -920,8 +1003,11 @@ export class Profiles {
       leveledUp: newLevel > row.level,
       gearDrop,
       rewards,
-      campaign: campaignPublic(campaign),
-      titles
+      campaign: campaignPublic(campaign, { levelsUnlocked: unlocked }),
+      titles,
+      maxLevel,
+      bestDepth: newBestDepth,
+      skillPoints: skillPoints(newLevel, maxLevel)
     });
   }
 
@@ -960,6 +1046,9 @@ export class Profiles {
     } else {
       return Response.json({ success: false, error: 'already migrated' }, { status: 409 });
     }
+    this.sql.exec(`UPDATE profiles SET max_level = MAX(COALESCE(max_level, 1), ?),
+      skills = CASE WHEN COALESCE(skills, '{}') = '{}' THEN ? ELSE skills END WHERE id = ?`,
+      s.max_level || 1, s.skills || '{}', toId);
     this.sql.exec('UPDATE profiles SET migrated_to = ?, updated_at = ? WHERE id = ?', toId, now, fromId);
     if (s.squad_id) {
       const destSquad = dest.length ? dest[0].squad_id : null;
@@ -980,13 +1069,86 @@ export class Profiles {
     return Response.json({ success: true, profile: this.rowToProfile(fresh[0]) });
   }
 
+  async getSave(id) {
+    const rows = this.sql.exec('SELECT save_state, save_at, migrated_to FROM profiles WHERE id = ?', id).toArray();
+    if (!rows.length || rows[0].migrated_to || !rows[0].save_state) return Response.json({ ok: true, save: null });
+    let save = null;
+    try { save = JSON.parse(rows[0].save_state); } catch (e) {}
+    // A level 2+ save made while levels were open is folded back to level 1 if the switch is off.
+    if (save && !levelsUnlocked(this.env) && save.level > 1) save = null;
+    return Response.json({ ok: true, save, savedAt: rows[0].save_at || null });
+  }
+
+  async writeSave({ profileId, input, serverPos, sector }) {
+    if (!profileId || String(profileId).startsWith('guest:')) return Response.json({ ok: false, error: 'login_required' }, { status: 403 });
+    const rows = this.sql.exec('SELECT * FROM profiles WHERE id = ?', profileId).toArray();
+    if (!rows.length) return Response.json({ ok: false, error: 'no_profile' }, { status: 404 });
+    const row = rows[0];
+    if (row.migrated_to) return Response.json({ ok: false, error: 'migrated' }, { status: 409 });
+    const now = Date.now();
+    const unlocked = levelsUnlocked(this.env);
+    if (input && input.clear) {
+      this.sql.exec(`UPDATE profiles SET save_state = NULL, save_at = ?, save_meta = ? WHERE id = ?`, now, JSON.stringify(emptyMeta(now)), profileId);
+      return Response.json({ ok: true, save: null, cleared: true });
+    }
+    if (!(input && input.dead) && row.save_at && now - row.save_at < 4000) {
+      return Response.json({ ok: false, error: 'too_soon' }, { status: 429 });
+    }
+    let prev = null;
+    try { prev = row.save_state ? JSON.parse(row.save_state) : null; } catch (e) {}
+    const meta = normalizeMeta(JSON.parse(row.save_meta || '{}'), row.save_at || row.created_at || now);
+    const out = sanitizeSave(input, {
+      prev, prevAt: row.save_at, meta, bestDepth: row.best_depth || 0, levelsUnlocked: unlocked, now,
+      serverPos: serverPos || null, sector: typeof sector === 'string' ? sector : null
+    });
+    if (!out.ok) return Response.json({ ok: false, error: out.error }, { status: 400 });
+    let save = out.save;
+    let died = false;
+    if (input && input.dead) {
+      died = true;
+      save = deathCheckpoint(save, { now, levelsUnlocked: unlocked });
+    }
+    const playAdd = Math.max(0, Math.min(out.playDeltaMs, 3_600_000));
+    this.sql.exec(`
+      UPDATE profiles SET save_state = ?, save_at = ?, save_meta = ?, play_time = COALESCE(play_time, 0) + ?,
+        deaths = COALESCE(deaths, 0) + ?, updated_at = ? WHERE id = ?
+    `, save ? JSON.stringify(save) : null, now, JSON.stringify(emptyMeta(now)), playAdd, died ? 1 : 0, now, profileId);
+    return Response.json({ ok: true, save, clamped: out.clamped, died, playTime: (row.play_time || 0) + playAdd });
+  }
+
+  async updateSkills({ profileId, action, skill }) {
+    const rows = this.sql.exec('SELECT * FROM profiles WHERE id = ?', profileId).toArray();
+    if (!rows.length) return Response.json({ ok: false, error: 'no_profile' }, { status: 404 });
+    const row = rows[0];
+    if (row.migrated_to) return Response.json({ ok: false, error: 'migrated' }, { status: 409 });
+    const ctx = { level: row.level || 1, maxLevel: row.max_level || 1 };
+    let skills = validateSkills(JSON.parse(row.skills || '{}'), ctx);
+    const now = Date.now();
+    if (action === 'reset') {
+      if (row.skills_reset_at && now - row.skills_reset_at < RESPEC_COOLDOWN_MS) {
+        return Response.json({ ok: false, error: 'respec_cooldown', retryAt: row.skills_reset_at + RESPEC_COOLDOWN_MS }, { status: 429 });
+      }
+      skills = normalizeSkills({});
+      this.sql.exec('UPDATE profiles SET skills = ?, skills_reset_at = ?, updated_at = ? WHERE id = ?', JSON.stringify(skills), now, now, profileId);
+    } else if (action === 'learn') {
+      const r = learnSkill(skills, skill, ctx);
+      if (!r.ok) return Response.json({ ok: false, error: r.reason, skills, points: skillPoints(ctx.level, ctx.maxLevel) }, { status: 400 });
+      skills = r.skills;
+      this.sql.exec('UPDATE profiles SET skills = ?, updated_at = ? WHERE id = ?', JSON.stringify(skills), now, profileId);
+    } else {
+      return Response.json({ ok: false, error: 'bad_action' }, { status: 400 });
+    }
+    const points = skillPoints(ctx.level, ctx.maxLevel);
+    return Response.json({ ok: true, skills, points, free: points - spentPoints(skills) });
+  }
+
   async getLeaderboard(type) {
     if (type === 'squad') return this.squadLeaderboard();
-    const orderBy = type === 'depth' ? 'best_depth' : 'xp';
+    const orderBy = type === 'depth' ? 'best_depth DESC' : type === 'level' ? 'max_level DESC, best_depth DESC' : 'xp DESC';
     const rows = this.sql.exec(`
-      SELECT id, name, pfp, level, xp, best_depth, x_handle, wallet FROM profiles
+      SELECT id, name, pfp, level, xp, best_depth, COALESCE(max_level, 1) AS max_level, x_handle, wallet FROM profiles
       WHERE migrated_to IS NULL
-      ORDER BY ${orderBy} DESC LIMIT 50
+      ORDER BY ${orderBy} LIMIT 50
     `).toArray();
     return Response.json({ leaderboard: rows });
   }
@@ -1216,8 +1378,13 @@ function privyAppId(env) {
   return env.PRIVY_APP_ID || '';
 }
 
+const PREVIEW_TEST_RE = /^preview-test:([a-z0-9]{3,24})$/;
 async function verifyIncomingToken(token, env) {
   if (!token) return null;
+  if (previewTestAuth(env)) {
+    const m = PREVIEW_TEST_RE.exec(token);
+    if (m) return { kind: 'privy', id: `did:privy:previewtest${m[1]}`, did: `did:privy:previewtest${m[1]}`, test: true };
+  }
   const appId = privyAppId(env);
   if (appId) {
     const privy = await verifyPrivyJwt(token, appId);
@@ -1313,6 +1480,7 @@ async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
   const origin = request.headers.get('Origin') || '';
   const path = url.pathname.replace(/\/+$/, '') || '/';
+  setExtraOrigins(env);
 
   if (request.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders(origin) });
@@ -1347,6 +1515,54 @@ async function handleRequest(request, env, ctx) {
 
   if (path === '/api/campaign') {
     return json({ chapters: CHAPTERS }, 200, origin);
+  }
+
+  // Feature switches the client reads at boot.
+  if (path === '/api/config') {
+    return json({ levelsUnlocked: levelsUnlocked(env), levelDepth: LEVEL_DEPTH_M, maxLevel: MAX_LEVEL, saves: true }, 200, origin);
+  }
+
+  // Save game: logged-in (Privy / Farcaster) profiles only. Guests keep the old run-and-done play.
+  if (path === '/api/save') {
+    const v = await authFromRequest(request, env);
+    if (!v) return json({ ok: false, error: 'login_required' }, 401, origin);
+    const profiles = profilesStub(env);
+    if (request.method === 'GET') {
+      const r = await profiles.fetch(new Request(`http://internal/save?id=${encodeURIComponent(v.id)}`));
+      return json(await r.json(), r.status, origin);
+    }
+    if (request.method === 'POST') {
+      let body;
+      try { body = await request.json(); } catch { return json({ ok: false, error: 'Invalid JSON' }, 400, origin); }
+      const snapshot = body && typeof body.snapshot === 'object' ? body.snapshot : body;
+      if (!snapshot || JSON.stringify(snapshot).length > 4096) return json({ ok: false, error: 'bad_save' }, 400, origin);
+      const r = await profiles.fetch(new Request('http://internal/save', {
+        method: 'POST',
+        body: JSON.stringify({ profileId: v.id, input: snapshot, serverPos: null, sector: null })
+      }));
+      return json(await r.json(), r.status, origin);
+    }
+    return json({ error: 'method' }, 405, origin);
+  }
+
+  // Skill tree: POST {action:'learn', skill} | {action:'reset'}. Same auth as profile writes.
+  if (path === '/api/skills' && request.method === 'POST') {
+    let body;
+    try { body = await request.json(); } catch { return json({ ok: false, error: 'Invalid JSON' }, 400, origin); }
+    const id = typeof body.id === 'string' ? body.id : (await authFromRequest(request, env) || {}).id;
+    if (!id) return json({ ok: false, error: 'Auth required' }, 401, origin);
+    const gate = await requireProfileWrite(request, env, id);
+    if (gate.error) return json({ ok: false, error: gate.error }, gate.status, origin);
+    const profiles = profilesStub(env);
+    if (gate.secretHash) {
+      const chk = await profiles.fetch(new Request('http://internal/check-guest', { method: 'POST', body: JSON.stringify({ id, secretHash: gate.secretHash }) }));
+      if (!(await chk.json()).ok) return json({ ok: false, error: 'Not your profile' }, 403, origin);
+    }
+    const r = await profiles.fetch(new Request('http://internal/skills', {
+      method: 'POST',
+      body: JSON.stringify({ profileId: id, action: body.action, skill: typeof body.skill === 'string' ? body.skill.slice(0, 20) : null })
+    }));
+    return json(await r.json(), r.status, origin);
   }
 
   if (path === '/presence' || path === '/api/presence') {
@@ -1456,7 +1672,8 @@ async function handleRequest(request, env, ctx) {
   }
 
   if (path === '/api/leaderboard') {
-    const type = url.searchParams.get('type') === 'depth' ? 'depth' : (url.searchParams.get('type') === 'squad' ? 'squad' : 'xp');
+    const t = url.searchParams.get('type');
+    const type = t === 'depth' || t === 'squad' || t === 'level' ? t : 'xp';
     const response = await profilesStub(env).fetch(new Request(`http://internal/leaderboard?type=${type}`));
     return json(await response.json(), 200, origin);
   }

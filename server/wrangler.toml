@@ -32,6 +32,9 @@ new_sqlite_classes = ["Events"]
 # Server verifies Privy JWTs with the public JWKS only; the Privy app secret is NOT needed here.
 [vars]
 PRIVY_APP_ID = "cmvrnxkao009s0hl58gy61ylg"
+# Endless levels switch. "0" = level 1 only (production until the launch announcement).
+# The preview worker runs with "1". Flip to "1" here (or in the dashboard) to open levels 2+.
+LEVELS_UNLOCKED = "0"
 # EVENTS_ADMIN_KEY is a secret:  wrangler secret put EVENTS_ADMIN_KEY
 
 # For local development

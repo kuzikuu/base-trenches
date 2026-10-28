@@ -1,4 +1,11 @@
 // Data-driven RPG campaign. Keep mission ids in sync with js/campaign.js.
+// Level 1 = Campaign 1 (the five chapters below). Levels 2+ get a generated campaign per level
+// (see levels.js levelChapter); those unlock when the player first reaches that level.
+
+import { levelChapter, parseLevelChapterId, clampLevel } from './levels.js';
+
+const LEVEL_STAT_KEYS = ['survive', 'dodge', 'relic'];
+const MAX_LEVEL_STAT_ENTRIES = 24;
 
 export const CHAPTERS = [
   {
@@ -92,8 +99,22 @@ export function emptyProgress() {
     completed: {},
     stats: { depth: 0, survive: 0, dodge: 0, relic: 0, squad: 0, boss: 0, dig: 0 },
     titles: [],
-    rewardedChapters: {}
+    rewardedChapters: {},
+    maxLevel: 1,
+    levelStats: {}
   };
+}
+
+function normalizeLevelStats(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  const keys = Object.keys(raw).map(Number).filter(n => Number.isInteger(n) && n >= 2).sort((a, b) => b - a).slice(0, MAX_LEVEL_STAT_ENTRIES);
+  for (const k of keys) {
+    const v = raw[k] || {};
+    out[k] = {};
+    for (const sk of LEVEL_STAT_KEYS) out[k][sk] = Math.max(0, Math.floor(Number(v[sk]) || 0));
+  }
+  return out;
 }
 
 export function normalizeProgress(raw) {
@@ -103,11 +124,15 @@ export function normalizeProgress(raw) {
     completed: raw.completed && typeof raw.completed === 'object' ? { ...raw.completed } : {},
     stats: { ...base.stats, ...(raw.stats || {}) },
     titles: Array.isArray(raw.titles) ? raw.titles.slice() : [],
-    rewardedChapters: raw.rewardedChapters && typeof raw.rewardedChapters === 'object' ? { ...raw.rewardedChapters } : {}
+    rewardedChapters: raw.rewardedChapters && typeof raw.rewardedChapters === 'object' ? { ...raw.rewardedChapters } : {},
+    maxLevel: clampLevel(raw.maxLevel || 1),
+    levelStats: normalizeLevelStats(raw.levelStats)
   };
 }
 
 export function getChapter(id) {
+  const L = parseLevelChapterId(id);
+  if (L) return levelChapter(L);
   return CHAPTERS.find(c => c.id === id) || null;
 }
 
@@ -121,6 +146,7 @@ export function getMission(chapterId, missionId) {
 export function chapterUnlocked(progress, chapter) {
   progress = normalizeProgress(progress);
   if (!chapter || chapter.index === 0) return true;
+  if (chapter.level >= 2) return progress.maxLevel >= chapter.level;
   const prev = CHAPTERS[chapter.index - 1];
   if (!prev) return false;
   const boss = prev.missions.find(m => m.boss);
@@ -147,7 +173,9 @@ export function statForType(type) {
 export function statsMeet(progress, mission) {
   progress = normalizeProgress(progress);
   const key = statForType(mission.type);
-  const have = Number(progress.stats[key] || 0);
+  const have = mission.scope === 'level'
+    ? Number((progress.levelStats[mission.level] || {})[key] || 0)
+    : Number(progress.stats[key] || 0);
   return have >= (mission.target || 1);
 }
 
@@ -163,8 +191,17 @@ export function canComplete(progress, chapterId, missionId) {
   return { ok: true, chapter, mission };
 }
 
-export function noteStat(progress, kind, amount = 1) {
+// level: the world level the event happened on (survive/dodge/relic also count per level 2+).
+export function noteStat(progress, kind, amount = 1, level = 1) {
   progress = normalizeProgress(progress);
+  const L = clampLevel(level);
+  if (L > progress.maxLevel) progress.maxLevel = L;
+  if (L >= 2 && LEVEL_STAT_KEYS.includes(kind)) {
+    const ls = progress.levelStats[L] || { survive: 0, dodge: 0, relic: 0 };
+    ls[kind] = (ls[kind] || 0) + (Number(amount) || 1);
+    progress.levelStats[L] = ls;
+    progress.levelStats = normalizeLevelStats(progress.levelStats);
+  }
   const key = kind === 'dig' ? 'depth' : (kind === 'survive' || kind === 'dodge' || kind === 'relic' || kind === 'squad' || kind === 'boss' || kind === 'depth' ? (kind === 'depth' ? 'depth' : kind) : null);
   if (kind === 'depth' || kind === 'dig') {
     const n = Number(amount) || 0;
@@ -198,10 +235,28 @@ export function completeMission(progress, chapterId, missionId, now = Date.now()
   return { ok: true, progress: next, mission, chapter, rewards, xp: mission.xp || 0 };
 }
 
-export function campaignPublic(progress) {
+export function noteLevel(progress, level) {
   progress = normalizeProgress(progress);
+  const L = clampLevel(level);
+  if (L > progress.maxLevel) progress.maxLevel = L;
+  return progress;
+}
+
+// opts.levelsUnlocked: also list level campaigns 2..maxLevel+1 (the next one shows as locked).
+export function campaignPublic(progress, opts = {}) {
+  progress = normalizeProgress(progress);
+  const chapters = CHAPTERS.slice();
+  if (opts.levelsUnlocked) {
+    const top = Math.min(progress.maxLevel + 1, 9999);
+    const from = Math.max(2, top - 11);
+    for (let L = from; L <= top; L++) chapters.push(levelChapter(L));
+  }
   return {
-    chapters: CHAPTERS.map(ch => ({
+    maxLevel: progress.maxLevel,
+    levelStats: progress.levelStats,
+    chapters: chapters.map(ch => ({
+      level: ch.level || 1,
+      theme: ch.theme || 'trenches',
       id: ch.id,
       name: ch.name,
       brief: ch.brief,
