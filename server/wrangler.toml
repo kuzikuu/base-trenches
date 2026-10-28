@@ -29,8 +29,9 @@ tag = "v2"
 new_sqlite_classes = ["Events"]
 
 # Public Privy app id (same value as js/config.js BT_PRIVY_APP_ID). Empty = Privy auth off.
+# Server verifies Privy JWTs with the public JWKS only; the Privy app secret is NOT needed here.
 [vars]
-PRIVY_APP_ID = ""
+PRIVY_APP_ID = "cmvrnxkao009s0hl58gy61ylg"
 # EVENTS_ADMIN_KEY is a secret:  wrangler secret put EVENTS_ADMIN_KEY
 
 # For local development

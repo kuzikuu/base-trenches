@@ -138,9 +138,22 @@ function showError(msg) {
   if (box) box.textContent = msg;
 }
 
+// Which login methods the Privy dashboard actually has switched on (public app config).
+// Buttons for disabled methods are hidden instead of failing with "not allowed".
+let methods = null;
+async function loadMethods() {
+  if (methods || !enabled()) return methods;
+  try {
+    const r = await fetch('https://auth.privy.io/api/v1/apps/' + encodeURIComponent(appId()), { headers: { 'privy-app-id': appId() } });
+    const c = await r.json();
+    methods = { twitter: !!c.twitter_oauth, wallet: !!c.wallet_auth, farcaster: !!c.farcaster_auth, email: !!c.email_auth };
+  } catch (e) { methods = null; }
+  return methods;
+}
+
 function homeView() {
   renderBody(`
-    <p class="note">Link X, a wallet, Farcaster or email. An embedded Base wallet is created if you do not have one. Non-custodial — keys stay with Privy / you.</p>
+    <p class="note">Sign in to keep your XP, gear and squad across devices. Non-custodial — keys stay with Privy / you.</p>
     <div class="login-methods">
       <button type="button" data-privy="twitter">X / TWITTER</button>
       <button type="button" data-privy="wallet">WALLET</button>
@@ -151,6 +164,12 @@ function homeView() {
     ${user ? `<button type="button" class="ghost" data-privy="logout">SIGN OUT</button>` : ''}`);
   ensureModal().querySelectorAll('[data-privy]').forEach(btn => {
     btn.onclick = () => startMethod(btn.dataset.privy);
+  });
+  loadMethods().then(m => {
+    if (!m) return;
+    ensureModal().querySelectorAll('.login-methods [data-privy]').forEach(btn => {
+      if (m[btn.dataset.privy] === false) btn.classList.add('hidden');
+    });
   });
 }
 
