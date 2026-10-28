@@ -139,6 +139,9 @@ let cb={};
 const bunkers=[{col:5,id:"hot",label:"HOT LIST"},{col:14,id:"calls",label:"CALLS"},{col:23,id:"callers",label:"CALLERS"},{col:32,id:"about",label:"HOW TO"}];
 // RPG stats (applied from equipped gear)
 let gearStats={digSpeed:1,protection:0,moveSpeed:1,luck:1};
+// Power of 9: server-wide boost (from the Pulse via the room) and the every-9-levels perk.
+let p9BoostUntil=0,p9Perk=1;const p9On=()=>Date.now()<p9BoostUntil;
+const P9GEM=()=>p9On()&&window.BTPower9?BTPower9.P9.BOOST_GEM_X:GEM_X;
 let curLevel=1,runId="",fortified=new Set(),fortCd=0,regenT=0,secondWindUsed=false,seamMax=0,seamRng=null,seamI=0;
 let sessionDigs=0,sessionXp=0,lastDepthXp=0,sessionStart=0;
 
@@ -622,7 +625,7 @@ function meleeHit(){
   return false;
 }
 function dig(){
-  P.swing=.18;P.digCd=.2/(gearStats.digSpeed*fx.digSpeed); // Faster dig with better pickaxe + Digging skill
+  P.swing=.18;P.digCd=.2/(gearStats.digSpeed*fx.digSpeed*p9Perk); // Faster dig with better pickaxe + Digging skill
   if(meleeHit())return;
   const [x,y]=digTarget();const t=tile(x,y);
   const hx=x*TS+6,hy=y*TS+6;
@@ -649,7 +652,7 @@ function dig(){
   if(typeof RPG!=='undefined')RPG.addXp(1,'dig');
   if(typeof Multiplayer!=='undefined')Multiplayer.sendDig(x,y);
   if(t===T.GEM){
-    gems++;bump(GEM_X);addText(hx-8,hy-8,"x"+GEM_X.toFixed(2),BLUE);Sfx.play("gem",gems%5);
+    gems++;const gx=P9GEM();bump(gx);addText(hx-8,hy-8,"x"+gx.toFixed(2),gx>GEM_X?"#ffb000":BLUE);Sfx.play("gem",gems%5);
     burst(hx,hy,12,["#16e0ff","#fff",BLUE],100,120);
     if(typeof Haptics!=='undefined')Haptics.notification('success');
     if(typeof RPG!=='undefined'){
@@ -668,12 +671,13 @@ function dig(){
     powerGems++;bump(POWER_X);Sfx.play("gem",4);
     burst(hx,hy,18,["#ff2bd6","#ffd400","#16e0ff","#fff"],130,100);
     if(typeof Haptics!=='undefined')Haptics.notification('success');
+    // The seam's coin (from the Telegram hot list) rides along so the in-game hot list can count it.
+    const s=seams.find(s=>x>=s.x&&x<s.x+3&&y>=s.y&&y<s.y+3);
     if(typeof RPG!=='undefined'){
       RPG.addXp(10,'power');
-      if(typeof Multiplayer!=='undefined')Multiplayer.sendEvent({kind:'power',x,y});
+      if(typeof Multiplayer!=='undefined')Multiplayer.sendEvent({kind:'power',x,y,ticker:s?s.ticker:null});
       if(typeof Multiplayer==='undefined'||!Multiplayer.connected)RPG.tryGearDrop(maxDepth);
     }
-    const s=seams.find(s=>x>=s.x&&x<s.x+3&&y>=s.y&&y<s.y+3);
     if(s){s.left--;addText(hx-14,hy-10,"$"+s.ticker+" "+(9-s.left)+"/9","#ff2bd6");
       if(s.left===0){Sfx.play("power");showBanner("$"+s.ticker+" POWERED UP");flash=.15;glitch=.35;addShake(6);if(typeof Haptics!=='undefined')Haptics.notification('success')}}}
   timers.scan=0;
@@ -1194,6 +1198,15 @@ const Game={
       {const top=S*TS;if(x>ELEV_COL*TS-6&&x<(ELEV_COL+2)*TS+6&&y>top-40&&y<top+24){cb.onElevator&&cb.onElevator();return}}});
     requestAnimationFrame(frame)},
   setHotList(l){hotList=l;newRun()},
+  // Power of 9 moments from the server (boost / 9-streak / 589 m / perk). Visual only.
+  setBoost(until){p9BoostUntil=Math.max(0,+until||0)},
+  get boostOn(){return p9On()},
+  setPerk(m){p9Perk=Math.max(1,Math.min(1.15,+m||1))},
+  p9Moment(kind,d){d=d||{};if(mode!=="play")return;const cx=P.x+4,cy=P.y+5;
+    if(kind==="boost"){showBanner("POWER OF 9 BOOST!");flash=.3;glitch=.5;addShake(8);Sfx.play("power");burst(cx,cy,40,["#ffd400","#fff",BLUE,"#ff2bd6"],160)}
+    else if(kind==="streak"){showBanner("9-STREAK! +9 POWER");bump(1.09);Sfx.play("milestone");burst(cx,cy,24,["#ffd400",BLUE,"#fff"],120)}
+    else if(kind==="manifest"){showBanner("MANIFESTING 589x");glitch=.7;flash=.25;addShake(10);Sfx.play("power");burst(cx,cy,48,["#ff2bd6","#ffd400","#16e0ff","#fff"],180)}
+    else if(kind==="perk"){showBanner("POWER OF 9 PERK "+(d.tier||1));Sfx.play("power");burst(cx,cy,30,["#ffd400","#fff",BLUE],140)}},
   // Multiplayer: adopt the room's world seed (regenerates the trench unless a run is in progress)
   setSeed(s){if(sharedSeed===s)return;sharedSeed=s;if(mode!=="play")newRun()},
   applyRemoteDig,
@@ -1227,7 +1240,7 @@ const Game={
     // preview/screenshot helper: put the trencher at a depth in an open pocket
     goDepth(d){const y=(FLOOR+d)*TS-P.h;P.y=y;P.vy=0;const tx=Math.floor((P.x+4)/TS);for(let r=FLOOR+d-2;r<FLOOR+d;r++){const t=tile(tx,r);if(t!==T.BED)setTile(tx,r,T.DUG)}
       if(!solidAt(tx,FLOOR+d))setTile(tx,FLOOR+d,T.DIRT);clampCam(true)},
-    tile,T}
+    tile,T,setTile,get seams(){return seams},TS}
 };
 window.Game=Game;
 })();

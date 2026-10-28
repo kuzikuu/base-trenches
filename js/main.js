@@ -258,6 +258,8 @@ function openPanel(id){
     loadElevatorStops();
   }else{
     $("#panelBody").innerHTML=BT.render(id);
+    // Hot List page: the in-game hot list (most collected in the trench) sits above the Telegram list.
+    if(id==='hot'&&typeof BTPulse!=='undefined'){$("#panelBody").insertAdjacentHTML('afterbegin',BTPulse.hotSection());BTPulse.mountHot()}
   }
   
   if(id!=='world'&&typeof WorldMap!=='undefined')WorldMap.unmount();
@@ -346,45 +348,56 @@ function renderInventory(){
 
 async function renderLeaderboard(){
   const profile=RPG.getProfile();
-  let lbType='xp';
-  
-  async function load(type){
-    lbType=type;
-    const data=await RPG.fetchLeaderboard(type);
+  // XP / LEVEL / SQUADS come from Profiles (all-time). DEPTH, GEMS, BOSSES and POWER 9 also have
+  // DAILY / WEEKLY boards from the Pulse (server-validated pickups only; guests never ranked).
+  const PULSE_M={depth:'depth',gems:'gems',boss:'boss',p9:'p9'};
+  const NOTE={gems:'Diamonds, power gems and relics the server credited to you.',boss:'Bosses you landed the killing blow on.',p9:'Power of 9 points: every gem you dig fills the server-wide meter (9-streaks, 589 m and boss kills count extra). Fill it together for a boost for everyone online.',depth:'Deepest verified dig.'};
+  let lbType='xp',lbPeriod='day';
+  const row=(r,i,value)=>{
+    const rank=i+1,rankClass=rank===1?'gold':rank===2?'silver':rank===3?'bronze':'';
+    const isMe=profile&&r.id&&r.id===profile.id;
+    const pfpHtml=r.pfp?`<img src="${escHtml(r.pfp)}" alt="">`:'';
+    const extra=r.x_handle?` <span class="sub">${escHtml(r.x_handle)}</span>`:'';
+    return `<div class="lb-row ${rank<=3?'top3':''} ${isMe?'equipped':''} ${r.anon?'anon':''}">
+      <div class="lb-rank ${rankClass}">#${rank}</div>
+      <div class="lb-pfp">${pfpHtml}</div>
+      <div class="lb-name">${escHtml(r.name||r.code||'Trencher')}${extra}</div>
+      <div class="lb-value">${value}</div>
+    </div>`;
+  };
+  async function load(type,period){
+    lbType=type;if(period)lbPeriod=period;
+    const pulse=PULSE_M[type]&&typeof BTPulse!=='undefined'&&!(type==='depth'&&lbPeriod==='all');
+    let rows=[],err=false;
+    try{
+      if(pulse)rows=(await BTPulse.loadBoard(PULSE_M[type],lbPeriod)).rows||[];
+      else rows=await RPG.fetchLeaderboard(type);
+    }catch(e){err=true}
     let html=`
       <div class="lb-tabs">
-        <button data-lb="xp" class="${type==='xp'?'on':''}">BY XP</button>
-        <button data-lb="depth" class="${type==='depth'?'on':''}">BY DEPTH</button>
-        ${typeof BTSave!=='undefined'&&BTSave.config.levelsUnlocked?`<button data-lb="level" class="${type==='level'?'on':''}">BY LEVEL</button>`:''}
+        <button data-lb="xp" class="${type==='xp'?'on':''}">XP</button>
+        <button data-lb="depth" class="${type==='depth'?'on':''}">DEPTH</button>
+        <button data-lb="gems" class="${type==='gems'?'on':''}">GEMS</button>
+        <button data-lb="boss" class="${type==='boss'?'on':''}">BOSSES</button>
+        <button data-lb="p9" class="${type==='p9'?'on':''}">⚡ POWER 9</button>
+        ${typeof BTSave!=='undefined'&&BTSave.config.levelsUnlocked?`<button data-lb="level" class="${type==='level'?'on':''}">LEVEL</button>`:''}
         <button data-lb="squad" class="${type==='squad'?'on':''}">SQUADS</button>
-      </div>
-    `;
-    
-    if(data.length===0){
-      html+='<p class="note">No rankings yet. Be the first!</p>';
-    }else{
+      </div>`;
+    if(PULSE_M[type])html+=`<div class="lb-tabs lb-period">${[['day','DAILY'],['week','WEEKLY'],['all','ALL-TIME']].map(([k,l])=>`<button data-lbp="${k}" class="${lbPeriod===k?'on':''}">${l}</button>`).join('')}</div><p class="note">${NOTE[type]} Guests aren't ranked: log in to get on the board.</p>`;
+    if(err)html+='<p class="note">Rankings unavailable right now.</p>';
+    else if(rows.length===0)html+=`<p class="note">No rankings ${PULSE_M[type]&&lbPeriod!=='all'?(lbPeriod==='day'?'today':'this week'):''} yet. Be the first!</p>`;
+    else{
       html+='<div class="lb-list">';
-      data.forEach((row,i)=>{
-        const rank=i+1;
-        const rankClass=rank===1?'gold':rank===2?'silver':rank===3?'bronze':'';
-        const isMe=profile&&row.id===profile.id;
-        const pfpHtml=row.pfp?`<img src="${escHtml(row.pfp)}" alt="">`:'';
-        const value=type==='depth'?`${row.best_depth}M`:type==='level'?`L${row.max_level||1} · ${row.best_depth}M`:type==='squad'?`${row.xp} SXP`: `${row.xp} XP`;
-        const extra=row.x_handle?` <span class="sub">${escHtml(row.x_handle)}</span>`:'';
-        html+=`<div class="lb-row ${rank<=3?'top3':''} ${isMe?'equipped':''}">
-          <div class="lb-rank ${rankClass}">#${rank}</div>
-          <div class="lb-pfp">${pfpHtml}</div>
-          <div class="lb-name">${escHtml(row.name||row.code||'Trencher')}${extra}</div>
-          <div class="lb-value">${value}</div>
-        </div>`;
+      rows.forEach((r,i)=>{
+        const value=pulse?BTPulse.VAL[type](r):type==='depth'?`${r.best_depth}M`:type==='level'?`L${r.max_level||1} · ${r.best_depth}M`:type==='squad'?`${r.xp} SXP`:`${r.xp} XP`;
+        html+=row(r,i,value);
       });
       html+='</div>';
     }
-    
     $("#panelBody").innerHTML=html;
     $$("[data-lb]").forEach(btn=>btn.onclick=()=>load(btn.dataset.lb));
+    $$("[data-lbp]").forEach(btn=>btn.onclick=()=>load(lbType,btn.dataset.lbp));
   }
-  
   await load('xp');
 }
 

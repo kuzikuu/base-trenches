@@ -174,6 +174,7 @@ function handleMessage(data) {
         if (typeof Game !== 'undefined' && Game.applyRemoteDig) Game.applyRemoteDig(bx, by);
       });
       if (data.roster) { roster = data.roster; rosterCallbacks.forEach(cb => cb(roster)); }
+      if (data.pulse) pulseCallbacks.forEach(cb => { try { cb(data.pulse); } catch (e) {} });
       break;
       
     case 'join':
@@ -232,6 +233,16 @@ function handleMessage(data) {
       
     case 'xp':
       if (typeof RPG !== 'undefined' && RPG.applyServerXp) RPG.applyServerXp(data);
+      break;
+
+    // Power of 9: server-wide meter / boost / feed (batched by the room from the Pulse DO)
+    case 'pulse':
+      pulseCallbacks.forEach(cb => { try { cb(data); } catch (e) {} });
+      break;
+
+    // Power of 9: a personal moment the server validated (9-streak, 589 m, perk)
+    case 'p9':
+      p9Callbacks.forEach(cb => { try { cb(data); } catch (e) {} });
       break;
 
     case 'saved':
@@ -305,6 +316,9 @@ function sendSave(snapshot) {
 
 function setRoom(name) { roomOverride = name || null; }
 function onSaved(cb) { savedCallbacks.push(cb); }
+const pulseCallbacks = [], p9Callbacks = [];
+function onPulse(cb) { pulseCallbacks.push(cb); }
+function onP9(cb) { p9Callbacks.push(cb); }
 
 function sendChat(text) {
   if (!connected || !ws) return;
@@ -371,6 +385,8 @@ window.Multiplayer = {
   setRoom,
   get room() { return roomOverride || 'main'; },
   onSaved,
+  onPulse,
+  onP9,
   sendXp,
   flushXp,
   interpolatePlayers,

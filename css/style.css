@@ -525,3 +525,59 @@ html.tg-miniapp input,html.tg-miniapp textarea{-webkit-user-select:text;user-sel
 .elev-stop:hover:not([disabled]){background:var(--blue);color:#fff}
 .elev-stop[disabled]{opacity:.45;cursor:not-allowed}
 .note.small{font-size:15px}
+
+/* ===== Power of 9: HUD meter, Telegram-style feed, in-game hot list ===== */
+.p9-box{position:absolute;left:12px;bottom:44px;width:250px;display:flex;flex-direction:column;gap:4px;pointer-events:none;z-index:3}
+.p9-meter{display:flex;align-items:center;gap:6px;background:#fff;border:2px solid var(--blue);padding:4px 6px;font-family:"PS2P";font-size:7px}
+.p9-meter b{color:var(--blue);white-space:nowrap;font-weight:normal}
+.p9-meter output{margin-left:auto;color:#333}
+.p9-sq{display:inline-flex;gap:2px}
+.p9-sq i{display:block;width:9px;height:9px;border:1px solid var(--blue);background:#fff}
+.p9-sq i.on{background:var(--blue)}
+.p9-sq.big i{width:16px;height:16px;border-width:2px}
+.p9-box.boosting .p9-meter{border-color:#ffb000;animation:p9pulse .9s infinite alternate}
+.p9-box.boosting .p9-sq i.on{background:#ffb000;border-color:#ffb000}
+@keyframes p9pulse{from{box-shadow:0 0 0 0 rgba(255,176,0,.6)}to{box-shadow:0 0 0 5px rgba(255,176,0,0)}}
+.p9-boost{font-family:"PS2P";font-size:7px;background:#ffb000;color:#000;border:2px solid #000;padding:5px 6px}
+.p9-feed{display:flex;flex-direction:column;gap:3px}
+.p9-feed .tg-msg{animation:chatFade 12s forwards}
+.tg-msg{display:flex;align-items:flex-start;gap:6px;font-family:"PS2P";font-size:7px;line-height:1.5}
+.tg-av{flex:none;width:18px;height:18px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-size:8px}
+.tg-b{background:#fff;border:2px solid var(--blue);border-radius:0 8px 8px 8px;padding:4px 7px;min-width:0;overflow-wrap:anywhere}
+.tg-who{display:block;color:var(--blue);font-weight:normal}
+.tg-t{color:#222}
+.tg-time{display:block;text-align:right;color:#888;font-style:normal;font-size:6px;margin-top:2px}
+.tg-msg.k-streak .tg-b,.tg-msg.k-manifest .tg-b{border-color:#ff2bd6}
+.tg-msg.k-boss .tg-b{border-color:#e33}
+.tg-msg.sys{justify-content:center}
+.tg-msg.sys .tg-b{background:#ffb000;border-color:#000;border-radius:10px;text-align:center}
+.ig-hot{border:3px solid var(--blue);padding:12px;margin:0 0 18px;background:#f4f7ff}
+.ig-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;margin-bottom:8px}
+.ig-head h3{margin:0;color:var(--blue);font-size:16px}
+.ig-hot .sub{font-family:"PS2P";font-size:7px;color:#555}
+.ig-cols{display:grid;grid-template-columns:1.1fr 1fr;gap:14px}
+.ig-tabs{margin-bottom:8px}
+.ig-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}
+.ig-list li{display:grid;grid-template-columns:34px 110px 1fr 44px;align-items:center;gap:6px;font-family:"PS2P";font-size:8px;background:#fff;border:2px solid var(--blue);padding:5px 6px}
+.ig-rank{color:#888}.ig-tk{color:var(--blue);font-weight:normal}.ig-kind{color:#ff2bd6;font-weight:normal}
+.ig-list output{text-align:right}
+.ig-bar{height:8px;border:1px solid var(--blue);background:#fff}.ig-bar span{display:block;height:100%;background:var(--blue)}
+.ig-meter{margin-top:10px;background:#fff;border:2px solid var(--blue);padding:8px;font-family:"PS2P";font-size:8px;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.ig-meter b{color:var(--blue);font-weight:normal}.ig-meter p{flex-basis:100%;margin:0;line-height:1.6}
+.tg-feed{background:#dfe8f5;border:3px solid var(--blue);display:flex;flex-direction:column;max-height:420px}
+.tg-top{display:flex;align-items:center;gap:6px;background:var(--blue);color:#fff;padding:7px 9px;font-family:"PS2P";font-size:8px}
+.tg-top b{font-weight:normal}.tg-top .sub{color:#cfe0ff;margin-left:auto}
+.tg-dot{width:8px;height:8px;border-radius:50%;background:#3f3;animation:p9pulse 1s infinite alternate}
+.tg-list{padding:8px;display:flex;flex-direction:column;gap:6px;overflow:auto}
+.lb-period{margin-top:-4px}
+.lb-row.anon .lb-name{color:#888;font-style:italic}
+@media (max-width:720px){.ig-cols{grid-template-columns:1fr}.ig-list li{grid-template-columns:28px 90px 1fr 36px}}
+@media (max-width:560px){.p9-box{left:8px;bottom:auto;top:150px;width:200px}.p9-meter{font-size:6px}.p9-sq i{width:7px;height:7px}.p9-feed .tg-msg{font-size:6px}}
+@media (pointer:coarse){.p9-box{bottom:auto;top:150px;width:210px}}
+.p9-big{position:absolute;left:50%;top:60%;transform:translate(-50%,-50%) scale(.6);opacity:0;pointer-events:none;z-index:6;background:#ffb000;border:4px solid #000;box-shadow:6px 6px 0 var(--blue);padding:14px 22px;text-align:center;display:flex;flex-direction:column;gap:8px;font-family:"PS2P";max-width:92vw}
+.p9-big b{font-size:22px;font-weight:normal;color:#000;letter-spacing:1px}
+.p9-big span{font-size:9px;color:#000}
+.p9-big i{font-style:normal;font-size:8px;color:var(--blue)}
+.p9-big.show{animation:p9big 4.8s forwards}
+@keyframes p9big{0%{opacity:0;transform:translate(-50%,-50%) scale(.6)}8%{opacity:1;transform:translate(-50%,-50%) scale(1.08)}14%{transform:translate(-50%,-50%) scale(1)}85%{opacity:1}100%{opacity:0;transform:translate(-50%,-50%) scale(1)}}
+@media (max-width:560px){.p9-big b{font-size:14px}.p9-big span{font-size:7px}}
