@@ -1,0 +1,568 @@
+{
+  "meta": {
+    "schema_version": 1,
+    "example_data": true,
+    "updated_at": "2026-10-27T23:00:00Z",
+    "chain": "base",
+    "thresholds": {
+      "tags": 9,
+      "comments": 5,
+      "retweets": 8,
+      "likes": 9
+    },
+    "hit_multiple": 2
+  },
+  "links": {
+    "x": "https://x.com/YOUR_X_HANDLE",
+    "telegram": "https://t.me/YOUR_TELEGRAM_GROUP"
+  },
+  "coins": [
+    {
+      "id": "c1",
+      "ticker": "EXAMPLE1",
+      "name": "Example Dig (fake)",
+      "chain": "base",
+      "contract": "0x0000000000000000000000000000000000000001",
+      "dexscreener_url": null,
+      "image": null
+    },
+    {
+      "id": "c2",
+      "ticker": "EXAMPLE2",
+      "name": "Example Gem (fake)",
+      "chain": "base",
+      "contract": "0x0000000000000000000000000000000000000002",
+      "dexscreener_url": null,
+      "image": null
+    },
+    {
+      "id": "c3",
+      "ticker": "EXAMPLE3",
+      "name": "Example Shovel (fake)",
+      "chain": "base",
+      "contract": "0x0000000000000000000000000000000000000003",
+      "dexscreener_url": null,
+      "image": null
+    },
+    {
+      "id": "c4",
+      "ticker": "EXAMPLE4",
+      "name": "Example Helmet (fake)",
+      "chain": "base",
+      "contract": "0x0000000000000000000000000000000000000004",
+      "dexscreener_url": null,
+      "image": null
+    },
+    {
+      "id": "c5",
+      "ticker": "EXAMPLE5",
+      "name": "Example Sandbag (fake)",
+      "chain": "base",
+      "contract": "0x0000000000000000000000000000000000000005",
+      "dexscreener_url": null,
+      "image": null
+    },
+    {
+      "id": "c6",
+      "ticker": "EXAMPLE6",
+      "name": "Example Flare (fake)",
+      "chain": "base",
+      "contract": "0x0000000000000000000000000000000000000006",
+      "dexscreener_url": null,
+      "image": null
+    },
+    {
+      "id": "c7",
+      "ticker": "EXAMPLE7",
+      "name": "Example Bunker (fake)",
+      "chain": "base",
+      "contract": "0x0000000000000000000000000000000000000007",
+      "dexscreener_url": null,
+      "image": null
+    },
+    {
+      "id": "c8",
+      "ticker": "EXAMPLE8",
+      "name": "Example Ration (fake)",
+      "chain": "base",
+      "contract": "0x0000000000000000000000000000000000000008",
+      "dexscreener_url": null,
+      "image": null
+    },
+    {
+      "id": "c9",
+      "ticker": "EXAMPLE9",
+      "name": "Example Whistle (fake)",
+      "chain": "base",
+      "contract": "0x0000000000000000000000000000000000000009",
+      "dexscreener_url": null,
+      "image": null
+    },
+    {
+      "id": "c10",
+      "ticker": "EXAMPLE10",
+      "name": "Example Periscope (fake)",
+      "chain": "base",
+      "contract": "0x0000000000000000000000000000000000000010",
+      "dexscreener_url": null,
+      "image": null
+    },
+    {
+      "id": "c11",
+      "ticker": "EXAMPLE11",
+      "name": "Example Lantern (fake)",
+      "chain": "base",
+      "contract": "0x0000000000000000000000000000000000000011",
+      "dexscreener_url": null,
+      "image": null
+    },
+    {
+      "id": "c12",
+      "ticker": "EXAMPLE12",
+      "name": "Example Compass (fake)",
+      "chain": "base",
+      "contract": "0x0000000000000000000000000000000000000012",
+      "dexscreener_url": null,
+      "image": null
+    },
+    {
+      "id": "c13",
+      "ticker": "EXAMPLE13",
+      "name": "Example Crater (fake)",
+      "chain": "base",
+      "contract": "0x0000000000000000000000000000000000000013",
+      "dexscreener_url": null,
+      "image": null
+    },
+    {
+      "id": "c14",
+      "ticker": "EXAMPLE14",
+      "name": "Example Barbwire (fake)",
+      "chain": "base",
+      "contract": "0x0000000000000000000000000000000000000014",
+      "dexscreener_url": null,
+      "image": null
+    }
+  ],
+  "callers": [
+    {
+      "id": "u1",
+      "alias": "caller_demo1",
+      "x_handle": "@caller_demo1",
+      "telegram_handle": "@tg_demo1_example",
+      "joined_at": "2026-03-11T12:00:00Z"
+    },
+    {
+      "id": "u2",
+      "alias": "caller_demo2",
+      "x_handle": "@caller_demo2",
+      "telegram_handle": "@tg_demo2_example",
+      "joined_at": "2026-04-12T12:00:00Z"
+    },
+    {
+      "id": "u3",
+      "alias": "caller_demo3",
+      "x_handle": "@caller_demo3",
+      "telegram_handle": "@tg_demo3_example",
+      "joined_at": "2026-05-13T12:00:00Z"
+    },
+    {
+      "id": "u4",
+      "alias": "caller_demo4",
+      "x_handle": "@caller_demo4",
+      "telegram_handle": "@tg_demo4_example",
+      "joined_at": "2026-06-14T12:00:00Z"
+    },
+    {
+      "id": "u5",
+      "alias": "caller_demo5",
+      "x_handle": "@caller_demo5",
+      "telegram_handle": "@tg_demo5_example",
+      "joined_at": "2026-07-15T12:00:00Z"
+    },
+    {
+      "id": "u6",
+      "alias": "caller_demo6",
+      "x_handle": "@caller_demo6",
+      "telegram_handle": "@tg_demo6_example",
+      "joined_at": "2026-08-16T12:00:00Z"
+    }
+  ],
+  "watchlist": [
+    {
+      "coin_id": "c11",
+      "status": "pinned",
+      "tags": [
+        {
+          "telegram_handle": "@member_demo1",
+          "tagged_at": "2026-10-26T10:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo2",
+          "tagged_at": "2026-10-26T11:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo3",
+          "tagged_at": "2026-10-26T12:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo4",
+          "tagged_at": "2026-10-26T13:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo5",
+          "tagged_at": "2026-10-26T14:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo6",
+          "tagged_at": "2026-10-26T15:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo7",
+          "tagged_at": "2026-10-26T16:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo8",
+          "tagged_at": "2026-10-26T17:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo9",
+          "tagged_at": "2026-10-26T18:00:00Z"
+        }
+      ],
+      "x_post": {
+        "url": "https://x.com/EXAMPLE_ACCOUNT/status/0",
+        "comments": 5,
+        "retweets": 8,
+        "likes": 9,
+        "checked_at": "2026-10-27T23:00:00Z"
+      },
+      "game_round": {
+        "id": "round-c11",
+        "seed": 11
+      },
+      "caller_id": "u4",
+      "first_tagged_at": "2026-10-26T10:00:00Z"
+    },
+    {
+      "coin_id": "c12",
+      "status": "powered",
+      "tags": [
+        {
+          "telegram_handle": "@member_demo1",
+          "tagged_at": "2026-10-26T10:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo2",
+          "tagged_at": "2026-10-26T11:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo3",
+          "tagged_at": "2026-10-26T12:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo4",
+          "tagged_at": "2026-10-26T13:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo5",
+          "tagged_at": "2026-10-26T14:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo6",
+          "tagged_at": "2026-10-26T15:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo7",
+          "tagged_at": "2026-10-26T16:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo8",
+          "tagged_at": "2026-10-26T17:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo9",
+          "tagged_at": "2026-10-26T18:00:00Z"
+        }
+      ],
+      "x_post": {
+        "url": "https://x.com/EXAMPLE_ACCOUNT/status/0",
+        "comments": 3,
+        "retweets": 6,
+        "likes": 9,
+        "checked_at": "2026-10-27T23:00:00Z"
+      },
+      "game_round": null,
+      "caller_id": "u5",
+      "first_tagged_at": "2026-10-26T10:00:00Z"
+    },
+    {
+      "coin_id": "c13",
+      "status": "tagging",
+      "tags": [
+        {
+          "telegram_handle": "@member_demo1",
+          "tagged_at": "2026-10-27T10:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo2",
+          "tagged_at": "2026-10-27T11:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo3",
+          "tagged_at": "2026-10-27T12:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo4",
+          "tagged_at": "2026-10-27T13:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo5",
+          "tagged_at": "2026-10-27T14:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo6",
+          "tagged_at": "2026-10-27T15:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo7",
+          "tagged_at": "2026-10-27T16:00:00Z"
+        }
+      ],
+      "x_post": null,
+      "game_round": null,
+      "caller_id": "u6",
+      "first_tagged_at": "2026-10-27T10:00:00Z"
+    },
+    {
+      "coin_id": "c14",
+      "status": "tagging",
+      "tags": [
+        {
+          "telegram_handle": "@member_demo1",
+          "tagged_at": "2026-10-27T10:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo2",
+          "tagged_at": "2026-10-27T11:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo3",
+          "tagged_at": "2026-10-27T12:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo4",
+          "tagged_at": "2026-10-27T13:00:00Z"
+        }
+      ],
+      "x_post": null,
+      "game_round": null,
+      "caller_id": "u2",
+      "first_tagged_at": "2026-10-27T10:00:00Z"
+    },
+    {
+      "coin_id": "c10",
+      "status": "powered",
+      "tags": [
+        {
+          "telegram_handle": "@member_demo1",
+          "tagged_at": "2026-10-25T10:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo2",
+          "tagged_at": "2026-10-25T11:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo3",
+          "tagged_at": "2026-10-25T12:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo4",
+          "tagged_at": "2026-10-25T13:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo5",
+          "tagged_at": "2026-10-25T14:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo6",
+          "tagged_at": "2026-10-25T15:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo7",
+          "tagged_at": "2026-10-25T16:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo8",
+          "tagged_at": "2026-10-25T17:00:00Z"
+        },
+        {
+          "telegram_handle": "@member_demo9",
+          "tagged_at": "2026-10-25T18:00:00Z"
+        }
+      ],
+      "x_post": {
+        "url": "https://x.com/EXAMPLE_ACCOUNT/status/0",
+        "comments": 1,
+        "retweets": 2,
+        "likes": 5,
+        "checked_at": "2026-10-27T23:00:00Z"
+      },
+      "game_round": null,
+      "caller_id": "u3",
+      "first_tagged_at": "2026-10-25T10:00:00Z"
+    }
+  ],
+  "calls": [
+    {
+      "id": "call1",
+      "coin_id": "c1",
+      "caller_id": "u1",
+      "called_at": "2026-06-03T15:09:00Z",
+      "call_price_usd": 0.00012,
+      "call_mcap_usd": 120000,
+      "ath_mcap_usd": 70680000,
+      "ath_at": "2026-06-28T00:00:00Z",
+      "current_mcap_usd": 38774400,
+      "current_price_usd": 0.0387744,
+      "status": "closed",
+      "x_post_url": "https://x.com/EXAMPLE_ACCOUNT/status/0",
+      "telegram_msg_url": "https://t.me/EXAMPLE_GROUP/0"
+    },
+    {
+      "id": "call2",
+      "coin_id": "c2",
+      "caller_id": "u2",
+      "called_at": "2026-06-21T15:09:00Z",
+      "call_price_usd": 8.8e-05,
+      "call_mcap_usd": 88000,
+      "ath_mcap_usd": 3757600,
+      "ath_at": "2026-06-28T00:00:00Z",
+      "current_mcap_usd": 902000,
+      "current_price_usd": 0.000902,
+      "status": "closed",
+      "x_post_url": "https://x.com/EXAMPLE_ACCOUNT/status/0",
+      "telegram_msg_url": "https://t.me/EXAMPLE_GROUP/0"
+    },
+    {
+      "id": "call3",
+      "coin_id": "c3",
+      "caller_id": "u3",
+      "called_at": "2026-07-09T15:09:00Z",
+      "call_price_usd": 1.9e-05,
+      "call_mcap_usd": 19000,
+      "ath_mcap_usd": 188100,
+      "ath_at": "2026-07-28T00:00:00Z",
+      "current_mcap_usd": 110960,
+      "current_price_usd": 0.00011096000000000001,
+      "status": "closed",
+      "x_post_url": "https://x.com/EXAMPLE_ACCOUNT/status/0",
+      "telegram_msg_url": "https://t.me/EXAMPLE_GROUP/0"
+    },
+    {
+      "id": "call4",
+      "coin_id": "c4",
+      "caller_id": "u1",
+      "called_at": "2026-07-30T15:09:00Z",
+      "call_price_usd": 8.8e-05,
+      "call_mcap_usd": 88000,
+      "ath_mcap_usd": 272800,
+      "ath_at": "2026-07-28T00:00:00Z",
+      "current_mcap_usd": 130240,
+      "current_price_usd": 0.00013024,
+      "status": "closed",
+      "x_post_url": "https://x.com/EXAMPLE_ACCOUNT/status/0",
+      "telegram_msg_url": "https://t.me/EXAMPLE_GROUP/0"
+    },
+    {
+      "id": "call5",
+      "coin_id": "c5",
+      "caller_id": "u4",
+      "called_at": "2026-08-12T15:09:00Z",
+      "call_price_usd": 0.00025,
+      "call_mcap_usd": 250000,
+      "ath_mcap_usd": 100000,
+      "ath_at": "2026-08-28T00:00:00Z",
+      "current_mcap_usd": 100000,
+      "current_price_usd": 0.0001,
+      "status": "closed",
+      "x_post_url": "https://x.com/EXAMPLE_ACCOUNT/status/0",
+      "telegram_msg_url": "https://t.me/EXAMPLE_GROUP/0"
+    },
+    {
+      "id": "call6",
+      "coin_id": "c6",
+      "caller_id": "u2",
+      "called_at": "2026-08-27T15:09:00Z",
+      "call_price_usd": 4.2e-05,
+      "call_mcap_usd": 42000,
+      "ath_mcap_usd": 764400,
+      "ath_at": "2026-08-28T00:00:00Z",
+      "current_mcap_usd": 280560,
+      "current_price_usd": 0.00028055999999999996,
+      "status": "closed",
+      "x_post_url": "https://x.com/EXAMPLE_ACCOUNT/status/0",
+      "telegram_msg_url": "https://t.me/EXAMPLE_GROUP/0"
+    },
+    {
+      "id": "call7",
+      "coin_id": "c7",
+      "caller_id": "u5",
+      "called_at": "2026-09-09T15:09:00Z",
+      "call_price_usd": 0.00025,
+      "call_mcap_usd": 250000,
+      "ath_mcap_usd": 400000,
+      "ath_at": "2026-09-28T00:00:00Z",
+      "current_mcap_usd": 242500,
+      "current_price_usd": 0.00024249999999999999,
+      "status": "open",
+      "x_post_url": "https://x.com/EXAMPLE_ACCOUNT/status/0",
+      "telegram_msg_url": "https://t.me/EXAMPLE_GROUP/0"
+    },
+    {
+      "id": "call8",
+      "coin_id": "c8",
+      "caller_id": "u6",
+      "called_at": "2026-09-24T15:09:00Z",
+      "call_price_usd": 0.00031,
+      "call_mcap_usd": 310000,
+      "ath_mcap_usd": 217000,
+      "ath_at": "2026-09-28T00:00:00Z",
+      "current_mcap_usd": 217000,
+      "current_price_usd": 0.000217,
+      "status": "open",
+      "x_post_url": "https://x.com/EXAMPLE_ACCOUNT/status/0",
+      "telegram_msg_url": "https://t.me/EXAMPLE_GROUP/0"
+    },
+    {
+      "id": "call9",
+      "coin_id": "c9",
+      "caller_id": "u3",
+      "called_at": "2026-10-06T15:09:00Z",
+      "call_price_usd": 0.00012,
+      "call_mcap_usd": 120000,
+      "ath_mcap_usd": 14520000,
+      "ath_at": "2026-10-28T00:00:00Z",
+      "current_mcap_usd": 3776400,
+      "current_price_usd": 0.0037764,
+      "status": "open",
+      "x_post_url": "https://x.com/EXAMPLE_ACCOUNT/status/0",
+      "telegram_msg_url": "https://t.me/EXAMPLE_GROUP/0"
+    },
+    {
+      "id": "call10",
+      "coin_id": "c10",
+      "caller_id": "u1",
+      "called_at": "2026-10-19T15:09:00Z",
+      "call_price_usd": 0.00012,
+      "call_mcap_usd": 120000,
+      "ath_mcap_usd": 660000,
+      "ath_at": "2026-10-25T00:00:00Z",
+      "current_mcap_usd": 507600,
+      "current_price_usd": 0.0005076000000000001,
+      "status": "open",
+      "x_post_url": "https://x.com/EXAMPLE_ACCOUNT/status/0",
+      "telegram_msg_url": "https://t.me/EXAMPLE_GROUP/0"
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>BASE TRENCHES · POWER OF 9</title>
+<meta name="description" content="Base Trenches: a meme community from the Base trenches. Power of 9. Manifesting 589x. Dig the trench, dodge the bullets, find the diamonds.">
+<meta property="og:title" content="BASE TRENCHES · POWER OF 9">
+<meta property="og:description" content="9 tags powers it up. 5 comments, 8 RTs, 9 likes pins it. Manifesting 589x.">
+<meta property="og:image" content="https://kuzikuu.github.io/base-trenches/screens/og.png">
+<meta property="og:url" content="https://kuzikuu.github.io/base-trenches/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0052ff">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<!-- LOADER -->
+<div id="loader">
+  <div class="squares"><i></i><i></i><i></i><i></i></div>
+  <canvas id="loaderAxe" width="220" height="220"></canvas>
+  <div class="dotmatrix big">TRENCHER PROGRAM</div>
+  <div class="loadbar"><span id="loadfill"></span></div>
+</div>
+
+<header id="topbar">
+  <a class="brand" href="#" data-nav="play" aria-label="Base Trenches home">
+    <span class="squares"><i></i><i></i><i></i><i></i></span>
+    <span class="dotmatrix">BASE TRENCHES</span>
+  </a>
+  <nav id="menu">
+    <a href="#play" data-nav="play">PLAY</a>
+    <a href="#hot" data-nav="hot">HOT LIST</a>
+    <a href="#calls" data-nav="calls">PREVIOUS CALLS</a>
+    <a href="#callers" data-nav="callers">CALLERS</a>
+    <a href="#about" data-nav="about">HOW IT WORKS</a>
+  </nav>
+  <div class="tools">
+    <button id="muteBtn" class="iconbtn" aria-label="Toggle sound" title="Sound (M)">SND ON</button>
+    <button id="menuBtn" class="iconbtn only-mobile" aria-label="Menu">MENU</button>
+  </div>
+</header>
+
+<main id="stage">
+  <canvas id="game" aria-label="Trench digging game"></canvas>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div class="lives" id="lives"></div>
+    <div class="hudright">
+      <div class="mult" id="mult">x1.00</div>
+      <div class="depth" id="depth">DEPTH 0M</div>
+    </div>
+    <div class="goal" id="goal"><span id="goalfill"></span><b>589x</b></div>
+  </div>
+  <div id="hint" class="hint hidden"></div>
+
+  <!-- TITLE -->
+  <section id="title" class="screen">
+    <canvas id="heroAxe" width="300" height="300"></canvas>
+    <div class="dotmatrix kicker">TRENCHER PROGRAM</div>
+    <h1 class="dotmatrix huge">BASE<br>TRENCHES</h1>
+    <div class="tag">POWER OF 9 <span>·</span> MANIFESTING 589x</div>
+    <button class="bigbtn" id="startBtn">▶ START DIGGING</button>
+    <div class="keys only-desktop">←→ / A D MOVE · ↑ / W JUMP+CLIMB · ↓ / S AIM DOWN · SPACE DIG · E ENTER BUNKER</div>
+    <div class="keys only-touch">USE THE PAD TO MOVE · ⛏ TO DIG</div>
+    <div class="quick">
+      <button data-nav="hot">HOT LIST</button><button data-nav="calls">PREVIOUS CALLS</button><button data-nav="callers">CALLERS</button><button data-nav="about">HOW IT WORKS</button>
+    </div>
+  </section>
+
+  <!-- GAME OVER -->
+  <section id="over" class="screen hidden">
+    <div class="dotmatrix kicker">TRENCHER DOWN</div>
+    <h2 class="dotmatrix huge">ONE LIFE.<br>ITS WORTH AN<br>ATTEMPT.</h2>
+    <div class="stats" id="overStats"></div>
+    <button class="bigbtn" id="retryBtn">↻ DIG AGAIN</button>
+    <div class="keys">PRESS SPACE / ENTER TO RETRY</div>
+  </section>
+
+  <!-- TOUCH -->
+  <div id="touch" class="hidden">
+    <div class="pad">
+      <button data-k="left" aria-label="left">◀</button>
+      <button data-k="up" aria-label="jump">▲</button>
+      <button data-k="down" aria-label="down">▼</button>
+      <button data-k="right" aria-label="right">▶</button>
+    </div>
+    <div class="acts">
+      <button data-k="enter" class="small" aria-label="enter bunker">E</button>
+      <button data-k="dig" class="dig" aria-label="dig">⛏</button>
+    </div>
+  </div>
+
+  <div id="ticker"><div id="tickerInner"></div></div>
+</main>
+
+<!-- PANELS -->
+<div id="panelWrap" class="hidden" role="dialog" aria-modal="true">
+  <div class="panel">
+    <div class="panelhead">
+      <span class="squares"><i></i><i></i><i></i></span>
+      <h2 id="panelTitle" class="dotmatrix">HOT LIST</h2>
+      <span class="example">EXAMPLE DATA</span>
+      <button id="closePanel" class="iconbtn" aria-label="Close">✕ ESC</button>
+    </div>
+    <div class="paneltabs">
+      <button data-nav="hot">HOT LIST</button><button data-nav="calls">PREVIOUS CALLS</button><button data-nav="callers">CALLERS</button><button data-nav="about">HOW IT WORKS</button>
+    </div>
+    <div class="panelbody" id="panelBody"></div>
+  </div>
+</div>
+
+<script src="js/font.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/pickaxe.js"></script>
+<script src="js/data.js"></script>
+<script src="js/game.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

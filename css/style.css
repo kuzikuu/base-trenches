@@ -1,0 +1,216 @@
+@font-face{font-family:"PS2P";src:url(../assets/fonts/PressStart2P-Regular.ttf) format("truetype");font-display:swap}
+@font-face{font-family:"VT323";src:url(../assets/fonts/VT323-Regular.ttf) format("truetype");font-display:swap}
+:root{
+  --blue:#0052ff;--blue2:#0a2fd1;--ink:#0b1a8f;--white:#fff;--paper:#f6f8ff;
+  --g:#22e36b;--y:#ffd400;--m:#ff2bd6;--c:#16e0ff;--dirt:#8a5a2b;
+  --top:52px;
+  --dither:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' shape-rendering='crispEdges'%3E%3Crect width='1' height='1' fill='%230052ff'/%3E%3Crect x='2' y='2' width='1' height='1' fill='%230052ff'/%3E%3C/svg%3E");
+  --dither50:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2' shape-rendering='crispEdges'%3E%3Crect width='1' height='1' fill='%230052ff'/%3E%3Crect x='1' y='1' width='1' height='1' fill='%230052ff'/%3E%3C/svg%3E");
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#fff;color:var(--blue);font-family:"VT323",monospace;font-size:20px;overflow:hidden;-webkit-tap-highlight-color:transparent}
+button{font:inherit;color:inherit;cursor:pointer}
+a{color:var(--blue)}
+.hidden{display:none!important}
+
+/* dot matrix / scanline text */
+.dotmatrix{font-family:"PS2P",monospace;letter-spacing:.06em;color:var(--blue);
+  background:repeating-linear-gradient(90deg,var(--blue) 0 2px,rgba(0,82,255,.25) 2px 3px);
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.squares{display:inline-flex;gap:4px;vertical-align:middle}
+.squares i{width:12px;height:12px;background:var(--blue);display:block}
+
+/* LOADER */
+#loader{position:fixed;inset:0;z-index:100;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;transition:opacity .35s steps(4)}
+#loader .squares{position:absolute;top:22px;left:22px}
+#loader.done{opacity:0;pointer-events:none}
+#loaderAxe{width:220px;height:220px;image-rendering:pixelated}
+.dotmatrix.big{font-size:22px}
+.loadbar{width:240px;height:14px;border:2px solid var(--blue);padding:2px}
+.loadbar span{display:block;height:100%;width:0;background:var(--dither50) repeat;background-size:4px 4px;transition:width .2s steps(5)}
+
+/* TOP BAR */
+#topbar{position:fixed;top:0;left:0;right:0;height:var(--top);z-index:30;display:flex;align-items:center;gap:20px;padding:0 16px;background:#fff;border-bottom:2px solid var(--blue)}
+#topbar::after{content:"";position:absolute;left:0;right:0;bottom:-8px;height:6px;background:var(--dither) repeat;background-size:4px 4px;opacity:.5;pointer-events:none}
+.brand{display:flex;align-items:center;gap:12px;text-decoration:none}
+.brand .dotmatrix{font-size:14px}
+#menu{display:flex;gap:4px;margin-left:auto}
+#menu a{font-family:"PS2P";font-size:10px;text-decoration:none;padding:8px 10px;border:2px solid transparent}
+#menu a:hover,#menu a.on{border-color:var(--blue);background:var(--blue);color:#fff}
+.tools{display:flex;gap:8px}
+.iconbtn{white-space:nowrap;background:#fff;border:2px solid var(--blue);font-family:"PS2P";font-size:9px;padding:7px 8px;color:var(--blue)}
+.iconbtn:hover{background:var(--blue);color:#fff}
+.only-mobile{display:none}
+
+/* STAGE */
+#stage{position:fixed;top:var(--top);left:0;right:0;bottom:0;overflow:hidden;background:#fff}
+#game{position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated;image-rendering:crisp-edges;display:block;touch-action:none}
+
+/* HUD */
+#hud{position:absolute;inset:0;pointer-events:none;padding:10px 12px}
+#hud .lives{background:#fff;border:2px solid var(--blue);padding:5px;display:inline-flex}
+.hudright{background:#fff;border:2px solid var(--blue);padding:6px 10px}
+.lives{display:flex;gap:5px}
+.lives i{width:16px;height:16px;background:var(--blue);display:block;box-shadow:inset 0 0 0 2px var(--blue)}
+.lives i.off{background:var(--dither) repeat;background-size:4px 4px;opacity:.5}
+.lives i.hit{animation:blink .12s steps(2) 6}
+@keyframes blink{50%{background:var(--m)}}
+.hudright{position:absolute;right:12px;top:10px;text-align:right}
+.mult{font-family:"PS2P";font-size:22px;color:var(--blue);text-shadow:2px 0 var(--c),-2px 0 var(--m)}
+.mult.pop{animation:pop .3s steps(3)}
+@keyframes pop{0%{transform:scale(1.35)}100%{transform:scale(1)}}
+.depth{font-family:"PS2P";font-size:9px;margin-top:6px}
+.goal{position:absolute;left:12px;top:44px;width:181px;height:12px;border:2px solid var(--blue);background:#fff}
+.goal span{display:block;height:100%;width:0;background:var(--blue)}
+.goal b{position:absolute;left:100%;top:-2px;margin-left:4px;background:#fff;padding:1px 3px;font-family:"PS2P";font-size:8px;font-weight:normal}
+.hint{position:absolute;left:50%;bottom:64px;transform:translateX(-50%);font-family:"PS2P";font-size:10px;background:#fff;border:2px solid var(--blue);padding:8px 12px;white-space:nowrap;pointer-events:none}
+
+/* SCREENS */
+.screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:14px;padding:20px;
+  background:rgba(255,255,255,.88)}
+#title{background:radial-gradient(ellipse at center,rgba(255,255,255,.97) 38%,rgba(255,255,255,.6) 80%)}
+#heroAxe{width:min(34vh,300px);height:min(34vh,300px);image-rendering:pixelated;margin-bottom:-10px}
+.kicker{font-size:12px}
+.huge{font-size:clamp(28px,6vw,64px);line-height:1.15;margin:0}
+.tag{font-family:"PS2P";font-size:clamp(10px,1.4vw,14px);letter-spacing:.08em}
+.tag span{color:var(--m)}
+.bigbtn{font-family:"PS2P";font-size:14px;padding:16px 26px;background:var(--blue);color:#fff;border:0;box-shadow:6px 6px 0 #fff,6px 6px 0 2px var(--blue);margin-top:6px}
+.bigbtn:hover{transform:translate(2px,2px);box-shadow:4px 4px 0 #fff,4px 4px 0 2px var(--blue)}
+.bigbtn:active{transform:translate(6px,6px);box-shadow:none}
+.keys{font-family:"VT323";font-size:20px;opacity:.85}
+.quick{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.quick button{background:#fff;border:2px solid var(--blue);font-family:"PS2P";font-size:9px;padding:8px 10px;color:var(--blue)}
+.quick button:hover{background:var(--blue);color:#fff}
+.stats{font-family:"PS2P";font-size:12px;line-height:2}
+.only-touch{display:none}
+
+/* TOUCH */
+#touch{position:absolute;left:0;right:0;bottom:34px;display:flex;justify-content:space-between;padding:0 14px;pointer-events:none}
+#touch button{pointer-events:auto;width:56px;height:56px;background:rgba(255,255,255,.75);border:2px solid var(--blue);color:var(--blue);font-size:22px;touch-action:none;user-select:none;-webkit-user-select:none}
+#touch button.down{background:var(--blue);color:#fff}
+.pad{display:grid;grid-template-columns:56px 56px 56px;grid-template-rows:56px 56px;gap:4px}
+.pad [data-k=left]{grid-column:1;grid-row:2}.pad [data-k=up]{grid-column:2;grid-row:1}.pad [data-k=down]{grid-column:2;grid-row:2}.pad [data-k=right]{grid-column:3;grid-row:2}
+.acts{display:flex;align-items:flex-end;gap:10px}
+#touch .dig{width:84px;height:84px;font-size:36px;border-radius:0;background:var(--blue);color:#fff}
+#touch .small{font-family:"PS2P";font-size:14px}
+
+/* TICKER */
+#ticker{position:absolute;left:0;right:0;bottom:0;height:28px;background:var(--blue);color:#fff;overflow:hidden;font-family:"PS2P";font-size:10px;line-height:28px;white-space:nowrap}
+#tickerInner{display:inline-block;padding-left:100%;animation:tick 60s linear infinite}
+#tickerInner span{margin-right:42px}
+#tickerInner em{font-style:normal;color:var(--y)}
+@keyframes tick{to{transform:translateX(-100%)}}
+
+/* PANELS */
+#panelWrap{position:fixed;inset:var(--top) 0 0 0;z-index:40;display:flex;align-items:center;justify-content:center;padding:18px;
+  background:var(--dither) repeat;background-size:4px 4px;background-color:rgba(255,255,255,.55)}
+.panel{width:min(1040px,100%);max-height:100%;display:flex;flex-direction:column;background:#fff;border:3px solid var(--blue);box-shadow:10px 10px 0 var(--blue);animation:panelin .24s steps(4)}
+@keyframes panelin{0%{transform:translateY(24px) scaleY(.2);opacity:0}100%{transform:none;opacity:1}}
+.panelhead{display:flex;align-items:center;gap:14px;padding:14px 16px;border-bottom:3px solid var(--blue);background:#fff}
+.panelhead h2{margin:0;font-size:18px}
+.example{font-family:"PS2P";font-size:9px;color:#fff;background:var(--m);padding:5px 7px;transform:rotate(-2deg)}
+#closePanel{margin-left:auto}
+.paneltabs{display:flex;gap:0;border-bottom:2px solid var(--blue);overflow-x:auto}
+.paneltabs button{flex:1;background:#fff;border:0;border-right:2px solid var(--blue);font-family:"PS2P";font-size:9px;padding:10px 8px;color:var(--blue);white-space:nowrap}
+.paneltabs button:last-child{border-right:0}
+.paneltabs button.on{background:var(--blue);color:#fff}
+.panelbody{overflow:auto;padding:18px;font-size:21px;line-height:1.15}
+.panelbody::-webkit-scrollbar{width:12px}.panelbody::-webkit-scrollbar-thumb{background:var(--blue)}
+.note{font-size:19px;opacity:.85;margin:0 0 14px}
+.note b{font-family:"PS2P";font-size:9px;background:var(--m);color:#fff;padding:2px 5px;font-weight:normal}
+
+/* hot list cards */
+.hotgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:16px}
+.card{border:2px solid var(--blue);padding:14px;position:relative;background:#fff}
+.card.pinned{box-shadow:6px 6px 0 var(--blue)}
+.card .tk{font-family:"PS2P";font-size:16px}
+.card .nm{opacity:.8}
+.card .st{position:absolute;right:10px;top:10px;font-family:"PS2P";font-size:8px;padding:5px 6px;border:2px solid var(--blue)}
+.st.pinned{background:var(--blue);color:#fff}
+.st.powered{background:var(--y);border-color:var(--y)!important;color:var(--ink)}
+.meter{display:grid;grid-template-columns:78px 1fr 40px;align-items:center;gap:8px;margin-top:8px}
+.meter label{font-family:"PS2P";font-size:8px}
+.meter .sq{display:flex;gap:3px}
+.meter .sq i{width:13px;height:13px;border:2px solid var(--blue);display:block;background:var(--dither) repeat;background-size:4px 4px;opacity:.55}
+.meter .sq i.on{background:var(--blue);opacity:1}
+.meter .sq.full i.on{background:var(--blue);box-shadow:0 0 0 1px var(--c)}
+.meter output{font-family:"PS2P";font-size:9px;text-align:right}
+.card .by{margin-top:10px;font-size:18px}
+.card .acts2{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.card .acts2 a{font-family:"PS2P";font-size:8px;border:2px solid var(--blue);padding:5px 6px;text-decoration:none}
+.card .acts2 a:hover{background:var(--blue);color:#fff}
+
+/* tables */
+.tbl{width:100%;border-collapse:collapse;font-size:20px}
+.tbl th{font-family:"PS2P";font-size:8px;text-align:left;padding:10px 8px;background:var(--blue);color:#fff;position:sticky;top:-18px;cursor:pointer;white-space:nowrap}
+.tbl td{padding:8px;border-bottom:2px dotted rgba(0,82,255,.35);white-space:nowrap}
+.tbl tr:hover td{background:#eef3ff}
+.tbl .num{text-align:right}
+.x{font-family:"PS2P";font-size:11px}
+.x.moon{color:#fff;background:var(--blue);padding:3px 5px}
+.x.up{color:var(--blue)}
+.x.down{color:var(--m)}
+.tbl a{text-decoration:none;border-bottom:2px solid}
+.rank{font-family:"PS2P";font-size:12px}
+.bar{display:inline-block;width:80px;height:10px;border:2px solid var(--blue);vertical-align:middle;margin-right:6px}
+.bar span{display:block;height:100%;background:var(--blue)}
+.tblwrap{overflow-x:auto}
+.filterchip{display:inline-flex;gap:8px;align-items:center;font-family:"PS2P";font-size:9px;border:2px solid var(--blue);padding:6px 8px;margin-bottom:12px}
+.filterchip button{border:0;background:var(--blue);color:#fff;font-family:"PS2P";font-size:8px;padding:3px 5px}
+
+/* about */
+.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:6px 0 18px}
+.step{border:2px solid var(--blue);padding:14px;position:relative}
+.step .n{font-family:"PS2P";font-size:28px;display:block;margin-bottom:8px}
+.step h3{font-family:"PS2P";font-size:10px;margin:0 0 8px;line-height:1.5}
+.step p{margin:0;font-size:19px}
+.step::after{content:"▶";position:absolute;right:-14px;top:40%;font-size:16px;background:#fff}
+.step:last-child::after{display:none}
+.links{display:flex;gap:12px;flex-wrap:wrap;margin:10px 0}
+.links a{font-family:"PS2P";font-size:11px;padding:12px 14px;background:var(--blue);color:#fff;text-decoration:none}
+.links a.ghost{background:#fff;color:var(--blue);border:2px solid var(--blue)}
+.fine{font-size:17px;opacity:.75;margin-top:14px}
+.thr{display:flex;gap:16px;flex-wrap:wrap;margin:6px 0 14px}
+.thr div{font-family:"PS2P";font-size:10px;border:2px solid var(--blue);padding:10px 12px}
+.thr b{font-size:22px;display:block;margin-bottom:6px;font-weight:normal}
+
+/* responsive */
+@media (max-width:980px){
+  #menu{display:none;position:fixed;top:var(--top);left:0;right:0;flex-direction:column;background:#fff;border-bottom:3px solid var(--blue);padding:8px;z-index:50}
+  #menu.open{display:flex}
+  #menu a{font-size:12px;padding:14px}
+  .only-mobile{display:inline-block}
+  .tools{margin-left:auto}
+  .steps{grid-template-columns:1fr 1fr}
+  .step::after{display:none}
+}
+@media (max-width:560px){
+  :root{--top:48px}
+  .brand .dotmatrix{font-size:11px}
+  .brand .squares i{width:9px;height:9px}
+  .panelbody{padding:12px;font-size:19px}
+  #panelWrap{padding:8px}
+  .panel{box-shadow:5px 5px 0 var(--blue)}
+  .panelhead h2{font-size:12px}
+  .hotgrid{grid-template-columns:1fr}
+  .steps{grid-template-columns:1fr}
+  .mult{font-size:16px}
+  .lives i{width:12px;height:12px}
+  .goal{width:145px;top:36px}
+  .keys{font-size:17px}
+  .bigbtn{font-size:12px;padding:14px 18px}
+  .meter{grid-template-columns:84px 1fr 40px}
+  .meter .sq i{width:11px;height:11px}
+}
+@media (pointer:coarse){.hint{bottom:auto;top:64px;font-size:9px}.only-desktop{display:none}.only-touch{display:block}}
+.panelhead,.paneltabs{flex-shrink:0}
+.example{white-space:nowrap}
+@media (max-width:560px){.example{font-size:7px}.panelhead{gap:8px;padding:10px}.paneltabs button{font-size:8px;padding:9px 8px}}
+@media (max-width:560px){
+  .tbl{font-size:15px}.tbl td,.tbl th{padding:7px 4px}.tbl th{font-size:7px}
+  .tbl.calls th:nth-child(4),.tbl.calls td:nth-child(4),.tbl.calls th:nth-child(5),.tbl.calls td:nth-child(5),.tbl.calls th:nth-child(8),.tbl.calls td:nth-child(8){display:none}
+  .tbl.callers th:nth-child(1),.tbl.callers td:nth-child(1),.tbl.callers th:nth-child(2),.tbl.callers td:nth-child(2),.tbl.callers th:nth-child(8),.tbl.callers td:nth-child(8){display:none}
+  .bar{display:none!important}
+  .x{font-size:8px;padding:2px 3px!important}
+  .tbl b{font-weight:normal}
+}
