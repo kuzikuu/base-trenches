@@ -2,6 +2,7 @@
 // All state lives in one SQLite-backed Durable Object ("main").
 import { DurableObject } from "cloudflare:workers";
 import { Bot, kvGet, kvSet } from "./core.js";
+import { AdbSink } from "./adb.js";
 
 const ALLOWED_ORIGINS = ["https://base-trenches.pages.dev", "https://kuzikuu.github.io"];
 const cors = (req) => {
@@ -28,8 +29,21 @@ export class BotDO extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.env = env;
+    this.ctx = ctx;
     this.db = { q: (s, ...p) => ctx.storage.sql.exec(s, ...p).toArray() };
+    this.db.q("CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT)");
+    // Oracle ADB (schema BASETRENCHES) write-through via ORDS REST-enabled SQL
+    this.sink = new AdbSink({
+      db: this.db,
+      fetch: (u, o) => fetch(u, o),
+      config: () => {
+        const password = kvGet(this.db, "secret:adb_password");
+        return env.ADB_SQL_URL && env.ADB_USER && password ? { url: env.ADB_SQL_URL, user: env.ADB_USER, password } : null;
+      },
+      log: (...a) => console.log(JSON.stringify(a)),
+    });
     this.bot = new Bot({
+      onWrite: (kind, key, payload) => { this.sink.enqueue(kind, key, payload); this.kick(); },
       db: this.db,
       tg: (m, p) => this.tg(m, p),
       fetchJson: async (url) => {
@@ -43,6 +57,20 @@ export class BotDO extends DurableObject {
       botUsername: env.BOT_USERNAME || "Powerof9BaseBot",
       log: (...a) => console.log(JSON.stringify(a)),
     });
+  }
+
+  kick() {
+    this.ctx.waitUntil(this.sink.flush().then(() => this.armAlarm()).catch((e) => console.log(JSON.stringify(["flush_error", String(e && e.message || e)]))));
+  }
+  async armAlarm() {
+    if (!this.sink.pending()) return;
+    const t = Math.max(Date.now() + 1000, this.sink.nextRetryAt() || 0);
+    const cur = await this.ctx.storage.getAlarm();
+    if (!cur || cur > t || cur < Date.now()) await this.ctx.storage.setAlarm(t);
+  }
+  async alarm() {
+    await this.sink.flush();
+    await this.armAlarm();
   }
 
   async tg(method, params) {
@@ -61,17 +89,25 @@ export class BotDO extends DurableObject {
     const p = url.pathname;
     const c = cors(req);
 
-    if (p === "/__cron" && req.headers.get("x-internal-cron") === "1") return json(await this.bot.refreshPrices());
+    if (p === "/__cron" && req.headers.get("x-internal-cron") === "1") {
+      const prices = await this.bot.refreshPrices();
+      if (this.sink.config()) this.sink.backfill();
+      const adb = await this.sink.flush(200);
+      await this.armAlarm();
+      return json({ prices, adb });
+    }
 
     if (p === "/__bootstrap") {
       const key = this.env.BOOTSTRAP_KEY;
       if (!key || key.length < 24 || req.method !== "POST" || !safeEq(req.headers.get("x-bootstrap-key"), key)) return json({ error: "not found" }, 404);
       const b = await req.json().catch(() => ({}));
       const stored = [];
-      for (const k of ["telegram_token", "webhook_secret", "webhook_path", "admin_key"]) {
+      for (const k of ["telegram_token", "webhook_secret", "webhook_path", "admin_key", "adb_password"]) {
         if (typeof b[k] === "string" && b[k].length >= 16) { kvSet(this.db, "secret:" + k, b[k]); stored.push(k); }
       }
-      return json({ ok: true, stored });
+      let backfill = null;
+      if (stored.includes("adb_password") && this.sink.config()) { backfill = this.sink.backfill(); this.kick(); }
+      return json({ ok: true, stored, backfill });
     }
 
     if (p.startsWith("/tg/") && req.method === "POST") {
@@ -102,12 +138,18 @@ export class BotDO extends DurableObject {
         return json({ items });
       }
       if (p === "/admin/refresh" && req.method === "POST") return json(await this.bot.refreshPrices());
+      if (p === "/admin/dbcheck" && req.method === "POST") {
+        try { return json({ ok: true, ...(await this.sink.writeCheck()), db: await this.sink.health() }); }
+        catch (e) { return json({ ok: false, error: String(e.message || e) }, 502); }
+      }
+      if (p === "/admin/backfill" && req.method === "POST") { const r = this.sink.backfill(true); this.kick(); return json(r); }
+      if (p === "/admin/flush" && req.method === "POST") { const r = await this.sink.flush(200); await this.armAlarm(); return json(r); }
       return json({ error: "not found" }, 404);
     }
 
     if (req.method === "GET" && p.startsWith("/api/")) {
       let body = null;
-      if (p === "/api/health") body = this.bot.health();
+      if (p === "/api/health") body = { ...this.bot.health(), db: await this.sink.health() };
       else if (p === "/api/hot") body = this.bot.apiHot();
       else if (p === "/api/calls") body = this.bot.apiCalls();
       else if (p === "/api/callers") body = this.bot.apiCallers();

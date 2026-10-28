@@ -168,8 +168,8 @@ Not financial advice. Most memes go to zero.`;
 
 // ---------- the bot ----------
 export class Bot {
-  constructor({ db, tg, fetchJson, now = () => Date.now(), groupId, channelId, ownerIds = [], botUsername = "Powerof9BaseBot", log = () => {} }) {
-    Object.assign(this, { db, tg, fetchJson, now, groupId: Number(groupId), channelId: Number(channelId), botUsername, log });
+  constructor({ db, tg, fetchJson, now = () => Date.now(), groupId, channelId, ownerIds = [], botUsername = "Powerof9BaseBot", log = () => {}, onWrite = () => {} }) {
+    Object.assign(this, { db, tg, fetchJson, now, groupId: Number(groupId), channelId: Number(channelId), botUsername, log, onWrite });
     this.owners = new Set([...ownerIds].map(Number).filter(Boolean));
     migrate(db);
   }
@@ -207,7 +207,10 @@ export class Bot {
     this.q(`INSERT INTO users (user_id,username,first_name,created_at) VALUES (?,?,?,?)
       ON CONFLICT(user_id) DO UPDATE SET username=excluded.username, first_name=excluded.first_name`,
       f.id, f.username || null, String(f.first_name || "").slice(0, 64), this.now());
+    this.emit("user", f.id);
   }
+  // durable write-through hook (ADB outbox); never lets a sink error break the bot
+  emit(kind, key, payload) { try { this.onWrite(kind, key, payload); } catch (e) { this.log("write_hook_error", kind, String(e && e.message || e)); } }
   user(id) { return this.q("SELECT * FROM users WHERE user_id=?", id)[0] || null; }
   coin(ca) { return this.q("SELECT * FROM coins WHERE ca=?", ca)[0] || null; }
   tagCount(ca) { return this.q("SELECT COUNT(*) AS n FROM tags WHERE ca=?", ca)[0].n; }
@@ -284,6 +287,7 @@ export class Bot {
       return { result: "dupe", n: this.tagCount(tok.ca), coin: this.coin(tok.ca) };
     }
     this.q("INSERT INTO tags (ca,user_id,tagged_at,chat_id,msg_id) VALUES (?,?,?,?,?)", tok.ca, userId, t, chatId, msgId);
+    this.emit("coin", tok.ca);
     const n = this.tagCount(tok.ca);
     coin = this.coin(tok.ca);
     if (coin.status === "tagging" && n >= THRESH.tags) {
@@ -336,6 +340,7 @@ export class Bot {
     }
     const gr = await this.safeTg("sendMessage", { chat_id: this.groupId, text: html, ...opts });
     if (gr?.message_id) this.q("UPDATE coins SET group_msg_id=? WHERE ca=?", gr.message_id, coin.ca);
+    this.emit("coin", coin.ca);
     return { channel: ch?.message_id || null, group: gr?.message_id || null };
   }
 
@@ -352,6 +357,8 @@ export class Bot {
     if (!coin) return { status: 404, error: "unknown coin" };
     const t = this.now();
     this.q("UPDATE coins SET replies=?, reposts=?, likes=?, engagement_at=?, x_post_url=COALESCE(?,x_post_url) WHERE ca=?", replies, reposts, likes, t, post, ca);
+    this.emit("engagement", null, { ca, t, post_url: post || coin.x_post_url || null, replies, reposts, likes });
+    this.emit("coin", ca);
     const meets = replies >= THRESH.replies && reposts >= THRESH.reposts && likes >= THRESH.likes;
     let pinned = false;
     if (meets && coin.status === "powered") {
@@ -379,6 +386,7 @@ export class Bot {
     if (ch?.message_id) {
       this.q("UPDATE coins SET pin_channel_msg_id=? WHERE ca=?", ch.message_id, coin.ca);
       await this.safeTg("pinChatMessage", { chat_id: this.channelId, message_id: ch.message_id, disable_notification: false });
+      this.emit("coin", coin.ca);
     }
     const gr = await this.safeTg("sendMessage", { chat_id: this.groupId, text: html, ...opts });
     if (gr?.message_id) await this.safeTg("pinChatMessage", { chat_id: this.groupId, message_id: gr.message_id, disable_notification: true });
@@ -440,6 +448,7 @@ export class Bot {
     const h = normalizeXHandle(arg);
     if (!h) return this.reply(m, "Usage: <code>/linkx @yourhandle</code>");
     this.q("UPDATE users SET x_handle=? WHERE user_id=?", h, m.from.id);
+    this.emit("user", m.from.id);
     return this.reply(m, `Linked X <b>${esc(h)}</b>. Your calls on the site will credit it.`);
   }
   cmdSetPost(m, arg) {
@@ -451,6 +460,7 @@ export class Bot {
     const c = this.coin(t.addr);
     if (!c) return this.reply(m, "Unknown coin. Tag it first.");
     this.q("UPDATE coins SET x_post_url=? WHERE ca=?", url, c.ca);
+    this.emit("coin", c.ca);
     return this.reply(m, `X post set for <b>$${esc(c.symbol)}</b>. Engagement checks will track 5 replies · 8 reposts · 9 likes.`);
   }
 
@@ -473,6 +483,8 @@ export class Bot {
           ath_mcap=CASE WHEN status!='tagging' AND (ath_price IS NULL OR ?>ath_price) THEN COALESCE(?,ath_mcap) ELSE ath_mcap END,
           ath_price=CASE WHEN status!='tagging' AND (ath_price IS NULL OR ?>ath_price) THEN ? ELSE ath_price END
           WHERE ca=?`, tok.price, tok.mcap, t, tok.price, t, tok.price, tok.mcap, tok.price, tok.price, ca);
+        this.emit("price", null, { ca, t, price: tok.price, mcap: tok.mcap });
+        this.emit("coin", ca);
         updated++;
       }
     }
