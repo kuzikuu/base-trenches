@@ -1,5 +1,7 @@
 # BASE TRENCHES · POWER OF 9
 
+**Live:** https://kuzikuu.github.io/base-trenches/
+
 **Manifesting 589x.** This is the website and game prototype for Base Trenches, an anonymous meme-coin crew on Base.
 
 The site *is* a game. You play a helmeted trencher with a pickaxe in a WW1 trench. You dig down through the dirt, dodge machine-gun sweeps and artillery, and mine blue diamonds to push your multiplier from x1 toward **x589**. Dug-outs along the trench are labelled **HOT LIST**, **CALLS**, **CALLERS** and **HOW TO**, and each one opens a panel. Every panel is also in the top menu, so the site works without playing.
