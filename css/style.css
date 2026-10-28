@@ -214,3 +214,25 @@ a{color:var(--blue)}
   .x{font-size:8px;padding:2px 3px!important}
   .tbl b{font-weight:normal}
 }
+
+/* Game over actions */
+.over-actions{display:flex;gap:12px;flex-wrap:wrap;justify-content:center}
+.bigbtn.ghost{background:#fff;color:var(--blue);border:2px solid var(--blue);box-shadow:4px 4px 0 var(--blue)}
+.bigbtn.ghost:hover{background:var(--blue);color:#fff}
+
+/* Safe-area insets for mini-app host */
+body{padding-top:var(--safe-top);padding-bottom:var(--safe-bottom);padding-left:var(--safe-left);padding-right:var(--safe-right)}
+#topbar{top:var(--safe-top)}
+#stage{top:calc(var(--top) + var(--safe-top))}
+#touch{bottom:calc(34px + var(--safe-bottom))}
+#ticker{bottom:var(--safe-bottom)}
+
+/* Mini-app viewport fit (approx 424x695) */
+@media (max-height:720px) and (max-width:450px){
+  .huge{font-size:clamp(22px,5vw,48px)}
+  #heroAxe{width:min(28vh,200px);height:min(28vh,200px)}
+  .kicker{font-size:10px}
+  .tag{font-size:9px}
+  .bigbtn{font-size:11px;padding:12px 18px}
+  .over-actions{gap:8px}
+}

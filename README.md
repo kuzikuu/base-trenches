@@ -141,13 +141,106 @@ Keep the bot's tokens server-side. The site never needs a secret.
 
 ## Hosting
 
-Any static host works. Drop the folder in as it is:
-- **Vercel:** `npx vercel` in this folder (framework: "Other", no build command, output dir `.`).
-- **Netlify:** drag-and-drop the folder onto app.netlify.com/drop, or `npx netlify deploy --dir . --prod`.
-- **GitHub Pages:** push to a repo, then Settings → Pages → deploy from branch `/root`.
-- **Domain:** something like `basetrenches.xyz` / `.fun`. Point it at the host and update `og:image` to an absolute URL.
+Any static host works. Drop the folder in as it is.
 
-`screens/` isn't needed in production apart from `screens/og.png` (the share card). Copy it to `/assets/og.png` if you prune.
+### GitHub Pages
+
+Already configured. Push to `main` and Pages deploys automatically.
+
+**Limitation:** GitHub Pages serves under `/base-trenches/` subpath. The `/.well-known/farcaster.json` manifest cannot be served at the root domain, so GitHub Pages is fine for testing but **Cloudflare Pages is recommended for production** (custom domain at root).
+
+### Cloudflare Pages (recommended)
+
+Two deployment options:
+
+**Option A: Git integration (easiest)**
+1. Go to Cloudflare Dashboard → Workers & Pages → Create → Pages
+2. Connect your GitHub repo
+3. Build command: (leave empty)
+4. Build output directory: `/` (or leave empty)
+5. Deploy
+
+**Option B: CLI / GitHub Actions**
+1. Create a Pages project: `npx wrangler pages project create base-trenches`
+2. Deploy: `npx wrangler pages deploy . --project-name=base-trenches`
+3. Or use the GitHub Actions workflow (`.github/workflows/cloudflare-pages.yml`) by adding these repository secrets:
+   - `CLOUDFLARE_API_TOKEN` (create at dash.cloudflare.com/profile/api-tokens with "Edit Cloudflare Workers" permissions)
+   - `CLOUDFLARE_ACCOUNT_ID` (found in your dashboard URL or Workers & Pages overview)
+
+The workflow only runs if the secrets exist (skips silently otherwise).
+
+### Custom domain
+
+Once on Cloudflare Pages, add your custom domain (e.g. `basetrenches.xyz`). Then update these URLs in:
+- `index.html`: `og:image`, `og:url`, `fc:miniapp` meta tag
+- `.well-known/farcaster.json`: all URLs (`homeUrl`, `iconUrl`, `splashImageUrl`, `heroImageUrl`, `ogImageUrl`, `screenshotUrls`)
+- `js/miniapp.js`: `BT_HOME_URL` at the top (or set `window.BT_HOME_URL` before loading)
+
+---
+
+## Base App / Farcaster Mini App
+
+The site works as a **Farcaster Mini App** inside the Base app or any Farcaster client. Features:
+
+- **Haptics:** tactile feedback on dig hits, block breaks, damage, gem collection, and UI interactions. Uses Farcaster SDK haptics when available, falls back to `navigator.vibrate` (Android Chrome). Toggle with the VIB button.
+- **User greeting:** shows the user's Farcaster username on the title screen
+- **Share:** game-over share button opens Farcaster cast composer (or X intent as fallback)
+- **Safe-area insets:** respects the host's navigation chrome
+
+### Signing the manifest (required)
+
+The `.well-known/farcaster.json` manifest has **placeholder** `accountAssociation` values. You must sign it to verify domain ownership:
+
+1. Deploy to your final domain (e.g. Cloudflare Pages with custom domain)
+2. Ensure `/.well-known/farcaster.json` is accessible at `https://yourdomain.com/.well-known/farcaster.json`
+3. Go to the [Mini App Manifest Tool](https://warpcast.com/~/developers/mini-apps/manifest) in your desktop browser
+4. Enter your domain and scroll to the bottom
+5. Click "Claim Ownership" and sign with your Farcaster custody address using your phone (Warpcast)
+6. Copy the full signed manifest and replace the contents of `.well-known/farcaster.json`
+
+The signed manifest will look like:
+```json
+{
+  "accountAssociation": {
+    "header": "eyJmaWQiOjEyMzQ1...",
+    "payload": "eyJkb21haW4iOiJ5b3VyZG9tYWluLmNvbSJ9",
+    "signature": "MHgwZmJiYWIw..."
+  },
+  "miniapp": { ... }
+}
+```
+
+### Manifest fields to customize
+
+Update these in `.well-known/farcaster.json` before signing:
+- `noindex`: set to `false` when ready to appear in Farcaster app stores
+- `webhookUrl`: add if you want to receive notification events
+- `screenshotUrls`: replace with proper 1284×2778 portrait screenshots (max 3)
+
+---
+
+## Files
+```
+index.html                HTML, menus, overlays, fc:miniapp embed meta
+css/style.css             white + Base blue, dithering, responsive, safe-area
+js/font.js                3x5 pixel font for in-canvas labels
+js/audio.js               WebAudio chiptune SFX (no audio files)
+js/haptics.js             Haptic feedback (SDK or vibrate fallback)
+js/miniapp.js             Farcaster Mini App SDK integration
+js/pickaxe.js             3D pickaxe, ordered-dithered, 10fps
+js/data.js                loads data/calls.json, derives stats, renders panels
+js/game.js                the game (tiles, physics, bullets, artillery, particles)
+js/main.js                wiring: loader, nav, HUD, touch, mini-app init
+data/calls.json           ← single source of truth (bot writes here)
+assets/fonts/             Press Start 2P + VT323 (OFL, self-hosted)
+assets/icon-1024.png      Mini-app icon (1024×1024, no alpha)
+assets/splash.png         Mini-app splash screen (200×200)
+screens/                  Screenshots + og.png (share card)
+.well-known/farcaster.json  Farcaster manifest (sign before production)
+_headers                  Cloudflare Pages headers (CORS, caching)
+wrangler.toml             Cloudflare Pages/Wrangler config
+vercel.json               Vercel config (optional)
+```
 
 ---
 
@@ -156,4 +249,5 @@ Any static host works. Drop the folder in as it is:
 - "Game rounds" per pinned coin currently means the coin appears as a labelled diamond seam in the shared game. Seeded per-coin levels (`game_round.seed`) are the next step.
 - No on-chain/wallet features, leaderboard submissions, or anti-cheat for game scores.
 - Social links in `links` are placeholders.
+- **iOS Safari:** does not support `navigator.vibrate`, so haptics are silent on iOS outside the Farcaster host app.
 - Not financial advice. Memes are volatile.

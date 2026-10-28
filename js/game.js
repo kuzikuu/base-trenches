@@ -171,15 +171,17 @@ function dig(){
   const cols=t===T.ROCK?[BLUE,"#fff",INK]:t===T.TIMBER?[BROWN,TAN]:t===T.GEM||t===T.POWER?["#16e0ff","#fff",BLUE]:[BLUE,BROWN,BLUE];
   burst(hx,hy,t===T.ROCK?6:5,cols,70);addShake(t===T.ROCK?2:1);
   Sfx.play(t===T.ROCK?"clink":"dig",t===T.CLAY);
+  if(typeof Haptics!=='undefined')Haptics.impact('light');
   if(hp[y][x]>0)return;
   if(t===T.UXB){fuses.push({x,y,t:1});addText(hx-10,hy-10,"UXB!","#ff2bd6");Sfx.play("sweep");return}
   setTile(x,y,y<FLOOR?T.TRENCH:T.DUG);
   burst(hx,hy,8,cols,90);
-  if(t===T.GEM){gems++;bump(GEM_X);addText(hx-8,hy-8,"x"+GEM_X.toFixed(2),BLUE);Sfx.play("gem",gems%5);burst(hx,hy,12,["#16e0ff","#fff",BLUE],100,120);}
-  if(t===T.POWER){powerGems++;bump(POWER_X);Sfx.play("gem",4);burst(hx,hy,18,["#ff2bd6","#ffd400","#16e0ff","#fff"],130,100);
+  if(typeof Haptics!=='undefined')Haptics.impact('medium');
+  if(t===T.GEM){gems++;bump(GEM_X);addText(hx-8,hy-8,"x"+GEM_X.toFixed(2),BLUE);Sfx.play("gem",gems%5);burst(hx,hy,12,["#16e0ff","#fff",BLUE],100,120);if(typeof Haptics!=='undefined')Haptics.notification('success');}
+  if(t===T.POWER){powerGems++;bump(POWER_X);Sfx.play("gem",4);burst(hx,hy,18,["#ff2bd6","#ffd400","#16e0ff","#fff"],130,100);if(typeof Haptics!=='undefined')Haptics.notification('success');
     const s=seams.find(s=>x>=s.x&&x<s.x+3&&y>=s.y&&y<s.y+3);
     if(s){s.left--;addText(hx-14,hy-10,"$"+s.ticker+" "+(9-s.left)+"/9","#ff2bd6");
-      if(s.left===0){Sfx.play("power");showBanner("$"+s.ticker+" POWERED UP");flash=.15;glitch=.35;addShake(6)}}}
+      if(s.left===0){Sfx.play("power");showBanner("$"+s.ticker+" POWERED UP");flash=.15;glitch=.35;addShake(6);if(typeof Haptics!=='undefined')Haptics.notification('success')}}}
   timers.scan=0;
 }
 function bump(f){const before=mult;mult*=f;

@@ -1,9 +1,12 @@
-// Wiring: loader, navigation, panels, HUD, touch controls.
+// Wiring: loader, navigation, panels, HUD, touch controls, mini-app + haptics.
 (function(){
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const TITLES={hot:"HOT LIST",calls:"PREVIOUS CALLS",callers:"CALLERS",about:"HOW IT WORKS"};
-let current=null,wasPlaying=false;
+let current=null,wasPlaying=false,lastStats=null;
 const touch=matchMedia("(pointer:coarse)").matches||"ontouchstart" in window;
+
+// Initialize mini-app SDK early
+MiniApp.init();
 
 // loader + pickaxes
 Pickaxe.attach($("#loaderAxe"),{res:96,fps:10,always:true});
@@ -19,7 +22,11 @@ function onHud(h){
   $("#depth").textContent="DEPTH "+h.depth+"M";
   $("#goalfill").style.width=(h.goal*100).toFixed(1)+"%";
 }
-function onHit(){[...livesEl.children].forEach(el=>{el.classList.remove("hit");void el.offsetWidth;el.classList.add("hit")})}
+function onHit(){
+  [...livesEl.children].forEach(el=>{el.classList.remove("hit");void el.offsetWidth;el.classList.add("hit")});
+  Haptics.impact('heavy');
+  Haptics.notification('error');
+}
 let hintTimer=null;
 function hint(t,ms){const h=$("#hint");if(!t){if(!hintTimer)h.classList.add("hidden");return}h.textContent=t;h.classList.remove("hidden");
   if(ms){clearTimeout(hintTimer);hintTimer=setTimeout(()=>{hintTimer=null;h.classList.add("hidden")},ms)}}
@@ -28,6 +35,7 @@ function onOver(s){
   $("#hud").classList.add("hidden");$("#touch").classList.add("hidden");
   $("#overStats").innerHTML=`MULTIPLIER <b>x${s.mult.toFixed(2)}</b><br>DEPTH ${s.depth}M · GEMS ${s.gems} · POWER ${s.powerGems}<br>BEST x${(+s.best).toFixed(2)} · GOAL 589x`;
   $("#over").classList.remove("hidden");
+  lastStats=s;
 }
 Game.init($("#game"),{onHud,onHit,onOver,onHint:t=>hint(t),onOpen:id=>openPanel(id)});
 
@@ -46,9 +54,18 @@ addEventListener("keydown",e=>{
 });
 
 // mute
-function toggleMute(){const m=Sfx.toggle();$("#muteBtn").textContent=m?"SND OFF":"SND ON"}
+function toggleMute(){const m=Sfx.toggle();$("#muteBtn").textContent=m?"SND OFF":"SND ON";Haptics.selection()}
 $("#muteBtn").textContent=Sfx.muted?"SND OFF":"SND ON";$("#muteBtn").onclick=toggleMute;
-$("#menuBtn").onclick=()=>$("#menu").classList.toggle("open");
+
+// haptics toggle
+function toggleHaptics(){const h=Haptics.toggle();$("#hapticBtn").textContent=h?"VIB ON":"VIB OFF"}
+$("#hapticBtn").textContent=Haptics.enabled?"VIB ON":"VIB OFF";$("#hapticBtn").onclick=toggleHaptics;
+
+// menu
+$("#menuBtn").onclick=()=>{$("#menu").classList.toggle("open");Haptics.selection()};
+
+// share button
+$("#shareBtn").onclick=()=>{if(lastStats)MiniApp.shareScore(lastStats.mult,lastStats.depth);Haptics.selection()};
 
 // panels
 function openPanel(id){
@@ -61,6 +78,7 @@ function openPanel(id){
   $("#panelWrap").classList.remove("hidden");$("#menu").classList.remove("open");
   if(location.hash!=="#"+id)history.replaceState(null,"","#"+id);
   Sfx.play("ui");
+  Haptics.selection();
 }
 function closePanel(){
   current=null;$("#panelWrap").classList.add("hidden");Game.pause(false);
@@ -87,7 +105,7 @@ document.addEventListener("click",e=>{
 // touch controls
 $$("#touch button").forEach(b=>{
   const k=b.dataset.k;
-  const on=e=>{e.preventDefault();Sfx.unlock();b.classList.add("down");Game.setKey(k,true)};
+  const on=e=>{e.preventDefault();Sfx.unlock();b.classList.add("down");Game.setKey(k,true);Haptics.selection()};
   const off=e=>{e.preventDefault();b.classList.remove("down");Game.setKey(k,false)};
   b.addEventListener("pointerdown",on);b.addEventListener("pointerup",off);b.addEventListener("pointercancel",off);b.addEventListener("pointerleave",off);
 });
@@ -98,7 +116,14 @@ BT.load().then(()=>{
   $("#tickerInner").innerHTML=BT.tickerHTML()+BT.tickerHTML();
 }).catch(err=>{console.error(err);$("#tickerInner").textContent="COULD NOT LOAD data/calls.json (serve over http, not file://)"}).finally(()=>{
   clearInterval(lt);$("#loadfill").style.width="100%";
-  setTimeout(()=>{$("#loader").classList.add("done");
-    const h=location.hash.slice(1);if(TITLES[h])openPanel(h);else if(h==="play")start();},450);
+  setTimeout(()=>{
+    $("#loader").classList.add("done");
+    // Signal mini-app host that we're ready
+    MiniApp.ready();
+    // Show username greeting if available
+    const username=MiniApp.getUsername();
+    if(username)$("#greeting").textContent="WELCOME "+username.toUpperCase();
+    const h=location.hash.slice(1);if(TITLES[h])openPanel(h);else if(h==="play")start();
+  },450);
 });
 })();

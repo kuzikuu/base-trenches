@@ -11,8 +11,11 @@
 <meta property="og:url" content="https://kuzikuu.github.io/base-trenches/">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="theme-color" content="#0052ff">
+<!-- Farcaster Mini App embed metadata -->
+<meta name="fc:miniapp" content='{"version":"1","imageUrl":"https://kuzikuu.github.io/base-trenches/screens/og.png","button":{"title":"⛏ Start digging","action":{"type":"launch_miniapp","name":"Base Trenches","url":"https://kuzikuu.github.io/base-trenches/","splashImageUrl":"https://kuzikuu.github.io/base-trenches/assets/splash.png","splashBackgroundColor":"#ffffff"}}}'>
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="css/style.css">
+<style>:root{--safe-top:0px;--safe-bottom:0px;--safe-left:0px;--safe-right:0px}</style>
 </head>
 <body>
 <!-- LOADER -->
@@ -37,6 +40,7 @@
   </nav>
   <div class="tools">
     <button id="muteBtn" class="iconbtn" aria-label="Toggle sound" title="Sound (M)">SND ON</button>
+    <button id="hapticBtn" class="iconbtn" aria-label="Toggle haptics" title="Haptics">VIB ON</button>
     <button id="menuBtn" class="iconbtn only-mobile" aria-label="Menu">MENU</button>
   </div>
 </header>
@@ -58,7 +62,7 @@
   <!-- TITLE -->
   <section id="title" class="screen">
     <canvas id="heroAxe" width="300" height="300"></canvas>
-    <div class="dotmatrix kicker">TRENCHER PROGRAM</div>
+    <div class="dotmatrix kicker" id="greeting">TRENCHER PROGRAM</div>
     <h1 class="dotmatrix huge">BASE<br>TRENCHES</h1>
     <div class="tag">POWER OF 9 <span>·</span> MANIFESTING 589x</div>
     <button class="bigbtn" id="startBtn">▶ START DIGGING</button>
@@ -74,7 +78,10 @@
     <div class="dotmatrix kicker">TRENCHER DOWN</div>
     <h2 class="dotmatrix huge">ONE LIFE.<br>ITS WORTH AN<br>ATTEMPT.</h2>
     <div class="stats" id="overStats"></div>
-    <button class="bigbtn" id="retryBtn">↻ DIG AGAIN</button>
+    <div class="over-actions">
+      <button class="bigbtn" id="retryBtn">↻ DIG AGAIN</button>
+      <button class="bigbtn ghost" id="shareBtn">↗ SHARE</button>
+    </div>
     <div class="keys">PRESS SPACE / ENTER TO RETRY</div>
   </section>
 
@@ -111,8 +118,12 @@
   </div>
 </div>
 
+<!-- Farcaster Mini App SDK (loaded before app scripts) -->
+<script src="https://cdn.jsdelivr.net/npm/@farcaster/miniapp-sdk@0.3/dist/index.min.js"></script>
 <script src="js/font.js"></script>
 <script src="js/audio.js"></script>
+<script src="js/haptics.js"></script>
+<script src="js/miniapp.js"></script>
 <script src="js/pickaxe.js"></script>
 <script src="js/data.js"></script>
 <script src="js/game.js"></script>

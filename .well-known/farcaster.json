@@ -1,0 +1,30 @@
+{
+  "accountAssociation": {
+    "header": "PLACEHOLDER_HEADER_BASE64",
+    "payload": "PLACEHOLDER_PAYLOAD_BASE64",
+    "signature": "PLACEHOLDER_SIGNATURE_BASE64"
+  },
+  "miniapp": {
+    "version": "1",
+    "name": "Base Trenches",
+    "homeUrl": "https://kuzikuu.github.io/base-trenches/",
+    "iconUrl": "https://kuzikuu.github.io/base-trenches/assets/icon-1024.png",
+    "splashImageUrl": "https://kuzikuu.github.io/base-trenches/assets/splash.png",
+    "splashBackgroundColor": "#ffffff",
+    "subtitle": "Power of 9",
+    "tagline": "Power of 9",
+    "description": "Dig the trench, dodge the bullets, find the diamonds. Manifesting 589x.",
+    "heroImageUrl": "https://kuzikuu.github.io/base-trenches/screens/og.png",
+    "ogImageUrl": "https://kuzikuu.github.io/base-trenches/screens/og.png",
+    "ogTitle": "Base Trenches",
+    "ogDescription": "Power of 9. Manifesting 589x.",
+    "screenshotUrls": [
+      "https://kuzikuu.github.io/base-trenches/screens/01-home.png",
+      "https://kuzikuu.github.io/base-trenches/screens/02-gameplay.png",
+      "https://kuzikuu.github.io/base-trenches/screens/03-hot.png"
+    ],
+    "primaryCategory": "games",
+    "tags": ["base", "memes", "game", "trenches", "crypto"],
+    "noindex": true
+  }
+}
