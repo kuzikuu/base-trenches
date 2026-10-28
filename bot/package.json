@@ -1,0 +1,14 @@
+{
+  "name": "base-trenches-bot",
+  "private": true,
+  "type": "module",
+  "description": "Power of 9 Telegram bot for Base Trenches (Cloudflare Worker + SQLite Durable Object)",
+  "scripts": {
+    "test": "node --test test/",
+    "deploy": "wrangler deploy",
+    "vm": "node vm/poll.mjs"
+  },
+  "devDependencies": {
+    "better-sqlite3": "^11.7.0"
+  }
+}

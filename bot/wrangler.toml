@@ -1,0 +1,23 @@
+# Base Trenches "Power of 9" Telegram bot
+# Deploy: npx wrangler deploy   (secrets are bootstrapped into the Durable Object, see README)
+name = "base-trenches-bot"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[vars]
+GROUP_ID = "-1004397164578"
+CHANNEL_ID = "-1003874691876"
+OWNER_TG_IDS = "1465096325"
+BOT_USERNAME = "Powerof9BaseBot"
+
+[[durable_objects.bindings]]
+name = "BOT"
+class_name = "BotDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["BotDO"]
+
+[triggers]
+crons = ["*/10 * * * *"]

@@ -6,7 +6,7 @@
 
 The site *is* a game. You play a helmeted trencher with a pickaxe in a WW1 trench. You dig down through the dirt, dodge machine-gun sweeps and artillery, and mine blue diamonds to push your multiplier from x1 toward **x589**. Dug-outs along the trench are labelled **HOT LIST**, **CALLS**, **CALLERS** and **HOW TO**, and each one opens a panel. Every panel is also in the top menu, so the site works without playing.
 
-> ⚠️ Everything in `data/calls.json` is **EXAMPLE DATA**: fake tickers (`$EXAMPLE1`…), fake contracts (`0x000…0001`) and fake handles (`@caller_demo1`). The UI labels it that way. Swap in real data once the bot is live.
+> ⚠️ Everything in `data/calls.json` is **EXAMPLE DATA**: fake tickers (`$EXAMPLE1`…), fake contracts (`0x000…0001`) and fake handles (`@caller_demo1`). The UI labels it that way. The site now loads live data from the Power of 9 bot API (`BT_BOT_URL` in `js/config.js`, source in `bot/`) and only falls back to this example file while the live board is empty.
 
 ---
 
@@ -79,7 +79,7 @@ The site only **reads** this file. The Telegram bot (or a backend or GitHub Acti
     "thresholds": { "tags": 9, "comments": 5, "retweets": 8, "likes": 9 },
     "hit_multiple": 2                  // a call counts as a "hit" when ATH >= 2x
   },
-  "links": { "x": "https://x.com/powerof9base", "telegram": "https://t.me/YOUR_TELEGRAM_GROUP" },
+  "links": { "x": "https://x.com/powerof9base", "telegram": "https://t.me/powerof9base", "telegram_group": "https://t.me/+vjKJdDAMAJQxZGYx" },
 
   "coins": [{                          // every coin ever tagged
     "id": "c1", "ticker": "EXAMPLE1", "name": "Example Dig (fake)", "chain": "base",

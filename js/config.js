@@ -9,10 +9,24 @@
 // Replace with your deployed worker URL, e.g.:
 // 'https://base-trenches-server.yourname.workers.dev'
 const DEFAULT_SERVER_URL = 'https://base-trenches-server.base-trenches.workers.dev';
+// Power of 9 Telegram bot API (hot list, calls, callers). Source: bot/
+const DEFAULT_BOT_URL = 'https://base-trenches-bot.base-trenches.workers.dev';
+window.BT_BOT_URL = window.BT_BOT_URL || DEFAULT_BOT_URL;
 
 window.BT_CONFIG = {
   // Multiplayer server URL (can be overridden by setting window.BT_SERVER_URL before loading)
   serverUrl: window.BT_SERVER_URL || DEFAULT_SERVER_URL,
+
+  // Telegram bot API base URL
+  botUrl: window.BT_BOT_URL,
+
+  // Community links
+  links: {
+    x: 'https://x.com/powerof9base',
+    telegramChannel: 'https://t.me/powerof9base',
+    telegramGroup: 'https://t.me/+vjKJdDAMAJQxZGYx',
+    bot: 'https://t.me/Powerof9BaseBot'
+  },
   
   // Home URL for sharing
   homeUrl: window.BT_HOME_URL || 'https://base-trenches.pages.dev/',

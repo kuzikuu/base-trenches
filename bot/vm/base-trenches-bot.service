@@ -1,0 +1,17 @@
+[Unit]
+Description=Base Trenches Power of 9 Telegram bot (long poll)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=opc
+WorkingDirectory=/opt/base-trenches/bot
+EnvironmentFile=/etc/base-trenches-bot.env
+ExecStart=/usr/bin/node vm/poll.mjs
+Restart=on-failure
+RestartSec=10
+# exit 2/3 = webhook active or another poller: don't loop
+RestartPreventExitStatus=2 3
+
+[Install]
+WantedBy=multi-user.target

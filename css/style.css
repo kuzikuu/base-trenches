@@ -336,3 +336,12 @@ body{padding-top:var(--safe-top);padding-bottom:var(--safe-bottom);padding-left:
   #chatInput{width:80px;font-size:8px;height:32px;border-width:2px}
   #chatSend{width:32px;height:32px;font-size:10px;border-width:2px}
 }
+/* live bot data: n/9 progress */
+.card .tagbig{display:flex;align-items:center;gap:8px;margin-top:10px;font-family:"PS2P";font-size:9px}
+.card .tagbig b{font-size:16px;color:var(--blue);font-weight:normal}
+.card .tagbig .pbar{flex:1;height:12px;border:2px solid var(--blue);background:var(--dither) repeat;background-size:4px 4px}
+.card .tagbig .pbar span{display:block;height:100%;background:var(--blue)}
+.card.powered .tagbig .pbar span,.card.pinned .tagbig .pbar span{box-shadow:0 0 6px var(--blue)}
+.note.live b{background:var(--blue)}
+.tbl .sub{font-size:.85em;opacity:.8}
+.note code{font-size:.9em;background:rgba(0,82,255,.08);padding:0 4px}
