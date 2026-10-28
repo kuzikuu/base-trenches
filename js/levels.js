@@ -29,7 +29,12 @@ const THEMES = [
   { id: 'ember', name: 'Hellfire Corner', campaign: 'Hellfire', accent: '#ff2bd6', accent2: '#ffd400', ink: '#0b1a8f', bed: '#0a2fd1', pale: '#ffd6f6', dens: [0.22, 0.34, 0.46], invert: false, props: 'ember',
     title: 'Firewalker', boss: 'The Furnace', relic: 'molten medal', blurb: 'Hot rock and burning seams. Everything down here bites.' },
   { id: 'core', name: 'The Base Core', campaign: 'Onchain', accent: '#16e0ff', accent2: '#22e36b', ink: '#ffffff', bed: '#0b1a8f', pale: '#3d74ff', dens: [0.55, 0.65, 0.75], invert: true, props: 'circuit',
-    title: 'Core Runner', boss: 'The Sequencer', relic: 'genesis block', blurb: 'Blue all the way down. The trench runs onchain.' }
+    title: 'Core Runner', boss: 'The Sequencer', relic: 'genesis block', blurb: 'Blue all the way down. The trench runs onchain.' },
+  // Level 8: Base culture. Pixel punks in Base blue, and a fan-tribute final boss (see PUNK_BOSS).
+  // `mottos` are real, publicly used Base phrases (sources in PUNK_SLOGANS); shown on the level banner.
+  { id: 'punks', name: 'Attack of the Punks', campaign: 'Stay Based', accent: '#0052ff', accent2: '#16e0ff', ink: '#0b1a8f', bed: '#0a2fd1', pale: '#c9d6ff', dens: [0.18, 0.28, 0.4], invert: false, props: 'punks',
+    title: 'Based Builder', boss: 'Builder #001', relic: 'Onchain Summer badge', blurb: 'Pixel punks in Base blue. Stay based, keep building.',
+    mottos: ['STAY BASED', 'BASE IS FOR EVERYONE', "IT'S TIME TO BRING THE WORLD ONCHAIN"] }
 ];
 
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
@@ -177,6 +182,10 @@ const CRAWLERS = {
     { id: 'glitchmite', name: 'Glitch Mite', kind: 'blinker', body: '#22e36b', eye: '#ffffff', tag: 'DEJA VU? A GLITCH' },
     { id: 'packetcrawler', name: 'Packet Crawler', kind: 'walker', body: '#16e0ff', eye: '#22e36b', tag: 'ENTER THE GRID' }
   ],
+  punks: [
+    { id: 'pixelpunk', name: 'Pixel Punk', kind: 'walker', body: '#0052ff', eye: '#ffffff', tag: 'STAY BASED' },
+    { id: 'mohawker', name: 'Mohawk Hopper', kind: 'hopper', body: '#16e0ff', eye: '#0b1a8f', tag: 'BASE IS FOR EVERYONE' }
+  ],
   sands: [
     { id: 'spicemite', name: 'Spice Mite', kind: 'swarmer', body: '#ffd400', eye: '#ff2bd6', tag: 'THE DIRT MUST FLOW' },
     { id: 'wormling', name: 'Wormling', kind: 'burrower', body: '#c9a27a', eye: '#0b1a8f', tag: 'STEP SOFT, STEP ODD' }
@@ -218,9 +227,85 @@ function crawlerStats(tier, levelDepth = 0) {
   };
 }
 
-function bossStats(tier) {
+// ---------- Attack of the Punks: Base culture slogans + the Builder #001 tribute boss ----------
+// Only phrases Base (@base) or Jesse Pollak (@jessepollak) used publicly, with the post they came from.
+const PUNK_SLOGANS = [
+  { text: 'STAY BASED', src: 'https://x.com/base/status/1931073901301506426' },
+  { text: 'NEW WEEK, SAME TEAM, STAY BASED, KEEP BUILDING', src: 'https://x.com/jessepollak/status/1977772900179652715' },
+  { text: 'BASE IS FOR EVERYONE', src: 'https://x.com/jessepollak/status/2011537655180230683' },
+  { text: "IT'S TIME TO BRING THE WORLD ONCHAIN", src: 'https://x.com/jessepollak/status/2001375464603128251' },
+  { text: "ONCHAIN SUMMER DOESN'T STOP", src: 'https://x.com/base/status/1826754546410160396' },
+  { text: 'BUILD ON BASE', src: 'https://x.com/base/status/1826334930554814507' },
+  { text: 'DAY BY DAY WE WILL BRING THE WORLD ONCHAIN', src: 'https://x.com/jessepollak/status/2011525884642279490' }
+];
+
+// A friendly final boss: a pixel tribute to Jesse Pollak's punk-style X avatar (sampled 24x24 from
+// the public avatar, `src`). He challenges you to build; nothing here mocks or insults him.
+// h hair · s skin · e eye · k outline/pupil · m mouth · g vape · b vape tip (Base blue) · . clear
+const PUNK_BOSS = {
+  id: 'punk',
+  name: 'BUILDER #001',
+  tribute: 'JESSE.BASE.ETH',
+  note: 'FAN TRIBUTE · NOT AFFILIATED WITH BASE OR COINBASE',
+  intro: 'BUILDER #001 CHALLENGES YOU TO BUILD ONCHAIN',
+  lines: ['STAY BASED', 'BASE IS FOR EVERYONE', 'BUILD ON BASE', "ONCHAIN SUMMER DOESN'T STOP", "IT'S TIME TO BRING THE WORLD ONCHAIN"],
+  defeat: 'GG, BUILDER. NEW WEEK, SAME TEAM, STAY BASED, KEEP BUILDING.',
+  src: 'https://pbs.twimg.com/profile_images/1879556312822120448/QngrqCSC_400x400.jpg',
+  palette: { h: '#fff68d', s: '#ae8b61', e: '#89571a', k: '#000207', m: '#5c1e09', g: '#595959', b: '#0052ff' },
+  sprite: [
+    '........................',
+    '........................',
+    '........................',
+    '...........h..hh........',
+    '........hh..hhhh.h......',
+    '......hhhhh.hhhhh.......',
+    '.....hhh.hhhhhh.hhhhh...',
+    '....hh.hhhhhhhhhhhh.....',
+    '...hhhhhhhhhhhhhhh......',
+    '.....hhhhhsssshhhhhh....',
+    '....hhhhsshssshshhh.h...',
+    '...hhhhhssssshsskhhh....',
+    '....hhksseessseekhhhh...',
+    '...hhhkssksssskskhhhh...',
+    '....hhkksssssssskhhh....',
+    '...hhhhksssssssskh.h....',
+    '....h.hhssssksssh.h.....',
+    '....hhhksssssskkkkkkk...',
+    '.....h.ksssmmkgggggbk...',
+    '........kssssskkkkkkk...',
+    '........ksksssk.........',
+    '........ksskkk..........',
+    '........ksssk...........',
+    '........ksssk...........'
+  ]
+};
+const PUNK_MIN_FIGHT_MS = 20_000; // the punk fight is longer than the Sandmaw's
+
+// Which boss guards a level band's floor. Locked (prod default): always the Sandmaw, so nothing
+// from levels 2+ (the punks included) ever shows.
+function bossFor(band, unlocked) {
+  if (!unlocked) return 'sandmaw';
+  return themeFor(band).id === 'punks' ? 'punk' : 'sandmaw';
+}
+function bossMinFightMs(id) { return id === 'punk' ? PUNK_MIN_FIGHT_MS : BOSS_MIN_FIGHT_MS; }
+
+function bossStats(tier, id = 'sandmaw') {
   const L = clampLevel(tier);
+  if (id === 'punk') {
+    return {
+      id: 'punk',
+      hp: Math.round(1.25 * (14 + 7 * (L - 1))),
+      damage: 1 + Math.floor((L - 1) / 3),
+      segments: 0,
+      speed: Math.min(130, 60 + 6 * (L - 1)),
+      dropEvery: Math.max(1.4, 2.8 - 0.12 * (L - 1)),  // seconds between telegraphed block drops
+      swoopEvery: 3,                                  // every Nth attack is a swoop that leaves it dazed
+      exposed: Math.max(1.2, 2.0 - 0.08 * (L - 1)),
+      name: PUNK_BOSS.name
+    };
+  }
   return {
+    id: 'sandmaw',
     hp: Math.round(14 + 7 * (L - 1)),
     damage: 1 + Math.floor((L - 1) / 3),
     segments: Math.min(14, 7 + Math.floor((L - 1) / 2)),
@@ -271,5 +356,5 @@ function validElevatorStop(depth, ctx = {}) {
   return elevatorStops(ctx).find(s => s.depth === d) || null;
 }
 
-window.BTLevels = { LEVEL_DEPTH_M, MAX_LEVEL, THEMES, roman, clampLevel, levelForDepth, levelTopDepth, levelFloorDepth, themeFor, difficulty, tileHp, levelGear, levelChapterId, parseLevelChapterId, levelChapter, CRAWLERS, CRAWLER_KINDS, CRAWLER_MIN_DEPTH_M, BOSS_ZONE_M, BOSS_MIN_FIGHT_MS, TELEPORT_COOLDOWN_S, ELEVATOR_SHAFT_STEP_M, ELEVATOR_MAX_STOPS, crawlerTier, crawlersFor, crawlerStats, bossStats, levelDepthOf, bossBand, inBossZone, killXp, bossXp, elevatorStops, validElevatorStop };
+window.BTLevels = { LEVEL_DEPTH_M, MAX_LEVEL, THEMES, roman, clampLevel, levelForDepth, levelTopDepth, levelFloorDepth, themeFor, difficulty, tileHp, levelGear, levelChapterId, parseLevelChapterId, levelChapter, CRAWLERS, CRAWLER_KINDS, CRAWLER_MIN_DEPTH_M, BOSS_ZONE_M, BOSS_MIN_FIGHT_MS, TELEPORT_COOLDOWN_S, ELEVATOR_SHAFT_STEP_M, ELEVATOR_MAX_STOPS, crawlerTier, crawlersFor, crawlerStats, PUNK_SLOGANS, PUNK_BOSS, PUNK_MIN_FIGHT_MS, bossFor, bossMinFightMs, bossStats, levelDepthOf, bossBand, inBossZone, killXp, bossXp, elevatorStops, validElevatorStop };
 })();

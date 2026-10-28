@@ -95,6 +95,11 @@ function drawProp(th,x,y,X,Y,step){
       else if(above){ctx.fillStyle="#16e0ff";const d=(step+x*3)%10;ctx.fillRect(X+6,Y+d,1,2)}break;
     case "ember": {ctx.fillStyle=(step+x+y)%4<2?"#ff2bd6":"#ffd400";const k=(step+x*5)%TS;ctx.fillRect(X+((x*7)%10),Y+TS-1-k,1,1);if(below){ctx.fillStyle="#ff2bd6";ctx.fillRect(X,Y+TS-1,TS,1)}}break;
     case "circuit": ctx.fillStyle="#16e0ff";ctx.fillRect(X,Y+5,TS,1);ctx.fillRect(X+((x*5)%9)+1,Y+2,1,4);if(step%6<3){ctx.fillStyle="#22e36b";ctx.fillRect(X+((x*5)%9),Y+1,3,2)}break;
+    case "punks": if(below){ // a little Base "square" coin + punk shades on the ground, blue sparks in the air
+        ctx.fillStyle=BLUE;ctx.fillRect(X+2,Y+TS-6,6,6);ctx.fillStyle="#fff";ctx.fillRect(X+3,Y+TS-4,4,2);
+        if(hash2(x,y,13)<.4){ctx.fillStyle=INK;ctx.fillRect(X+8,Y+TS-3,4,1);ctx.fillRect(X+8,Y+TS-2,1,1);ctx.fillRect(X+11,Y+TS-2,1,1)}}
+      else if(above){ctx.fillStyle=step%8<4?BLUE:"#16e0ff";ctx.fillRect(X+5,Y,1,2);ctx.fillRect(X+3,Y+2,5,4);ctx.fillStyle="#fff";ctx.fillRect(X+4,Y+3,3,1)}
+      else{ctx.fillStyle=(step+x)%6<3?BLUE:"#16e0ff";ctx.fillRect(X+((x*7)%9)+1,Y+((step+y*3)%TS),1,1)}break;
     case "wire": ctx.fillStyle=BLUE;for(let k=0;k<TS;k+=3)ctx.fillRect(X+k,Y+6+((k/3)%2),1,1);break;
     case "dune": if(below){ctx.fillStyle="#c9a27a";for(let k=0;k<TS;k++)ctx.fillRect(X+k,Y+TS-2-((k+x)%6<3?1:0),1,2);if(hash2(x,y,12)<.3){ctx.fillStyle="#fff";ctx.fillRect(X+3,Y+TS-4,5,1);ctx.fillRect(X+4,Y+TS-5,1,1);ctx.fillRect(X+7,Y+TS-5,1,1)}}
       else{ctx.fillStyle=(step+x)%6<3?"#ffd400":"#ff2bd6";ctx.fillRect(X+((x*7)%9)+1,Y+((step+y*3)%TS),1,1)}break;
@@ -190,7 +195,7 @@ function newRun(){
   while(sy<FLOOR+2000){const hl=hotList.length?hotList[i%hotList.length]:{ticker:"EXAMPLE"};
     seams.push({x:3+Math.floor(rng()*(W-9)),y:sy,ticker:hl.ticker,status:hl.status||"",left:9});sy+=16+Math.floor(i*3+rng()*10);i++;}
   seamMax=sy;seamRng=null;seamI=i;
-  curLevel=1;crawlers=[];spits=[];boss=null;bossDone=new Set();tpCd=0;fortified=new Set();fortCd=0;regenT=0;secondWindUsed=false;
+  curLevel=1;crawlers=[];spits=[];boss=null;punkDrops=[];bossDone=new Set();tpCd=0;fortified=new Set();fortCd=0;regenT=0;secondWindUsed=false;
   runId="r-"+Date.now().toString(36)+"-"+((Math.random()*1e8)|0).toString(36);
   P={x:20*TS+2,y:(FLOOR)*TS-11,w:8,h:11,vx:0,vy:0,face:1,ground:false,swing:0,aim:"side",digCd:0,walk:0,climb:false};
   bullets=[];lanes=[];shells=[];booms=[];parts=[];texts=[];falling=[];unstable.clear();fuses=[];
@@ -268,12 +273,14 @@ const CRAWL_SPR={
   magmatick:["........","..BBBB..",".BBYBBB.","BEBBBYBB",".BBBBBB.","D.D..D.D"],
   glitchmite:[".BBBBBB.","BEBBBBEB","BBBBBBBB","B.B.B.B.",".B.B.B.B","B.B.B.B."],
   packetcrawler:["DDDDDDD.","DBBBBBD.","DBEBEBD.","DBBBBBD.","DDDDDDD.","D.D.D.D."],
+  pixelpunk:["..DDDD..",".DDDDDDD",".BBBBBB.",".DWDDWD.",".BBBBB..","..B..B.."],
+  mohawker:["...YY...","...YY...",".BBBBBB.",".BEBBEB.",".BBWWBB.","D.D..D.D"],
   spicemite:["........","..BBB...",".BEBEB..","BBBBBBB.",".D.D.D..","........"],
   wormling:["........","BBBB.WW.","BBBBBWEW","BBBBBWW.","DDDD....","........"]
 };
 const CRAWL_FALLBACK={id:"mudling",name:"Mudling",kind:"walker",body:BROWN,eye:"#ffd400",tag:""};
 const ELEV_COL=36;                       // the lift at the east end of the trench
-let crawlers=[],spits=[],boss=null,bossDone=new Set(),seenCrawl=new Set(),tpCd=0;
+let crawlers=[],spits=[],punkDrops=[],boss=null,bossDone=new Set(),seenCrawl=new Set(),tpCd=0;
 const curDepth=()=>Math.max(0,Math.floor((P.y+P.h)/TS)-FLOOR);
 function crawlCtx(depth){
   const tier=LV?LV.crawlerTier(depth):1,ld=LV?LV.levelDepthOf(depth):depth;
@@ -389,6 +396,7 @@ function drawCrawlers(cx,cy,step){
 // quarter it gets angry.
 function bossColors(){const th=LV&&levelsOn?LV.themeFor(curLevel):null;return{body:TAN,ring:BROWN,acc:th&&th.id!=="trenches"?th.accent:"#ffd400"}}
 function spawnBoss(band){
+  if(LV.bossFor&&LV.bossFor(band,levelsOn)==="punk")return spawnPunk(band);
   const st=LV.bossStats(band),hx=P.x+P.w/2,hy=P.y+P.h+7*TS;
   boss={band,st,hp:st.hp,max:st.hp,state:"hunt",t:0,x:hx,y:hy,cycle:0,flash:0,ex:hx,top:0,row:0,dir:1,mites:0,segs:[],col:bossColors()};
   for(let i=0;i<st.segments;i++)boss.segs.push({x:hx,y:hy+(i+1)*7});
@@ -408,19 +416,21 @@ function bossHurt(n,how){const b=boss;if(!b||b.hp<=0)return;
 function bossDie(){
   const b=boss;boss=null;bossDone.add(b.band);
   b.segs.forEach((s,i)=>setTimeout(()=>{burst(s.x,s.y,22,[TAN,BROWN,"#ffd400","#fff"],130);addShake(6);Sfx.play("boom")},i*90));
-  burst(b.x,b.y,50,[TAN,BROWN,"#ffd400","#fff","#ff2bd6"],170,200,1.1);
-  showBanner(b.st.name+" FELLED");flash=.3;glitch=.5;Sfx.play("power");
+  const punk=b.id==="punk";if(punk){punkDrops=[];texts.push({x:b.x-60,y:b.y-30,s:LV.PUNK_BOSS.defeat,c:BLUE,t:0,life:4})}
+  burst(b.x,b.y,50,punk?[BLUE,"#16e0ff","#fff","#ffd400"]:[TAN,BROWN,"#ffd400","#fff","#ff2bd6"],170,200,1.1);
+  showBanner(punk?"GG! STAY BASED":b.st.name+" FELLED");flash=.3;glitch=.5;Sfx.play("power");
   lives=Math.min(9,lives+3);texts.push({x:P.x-10,y:P.y-12,s:"+3 LIVES","c":"#22e36b",t:0,life:2});hud(true);
   if(typeof RPG!=='undefined'){RPG.addXp(LV.bossXp(levelsOn?curLevel:1),'boss');if(typeof Multiplayer==='undefined'||!Multiplayer.connected)RPG.tryGearDrop(Math.max(300,maxDepth))}
   if(typeof Multiplayer!=='undefined')Multiplayer.sendEvent({kind:'bossKill'});
   if(levelsOn)setTimeout(()=>{if(mode==="play")showBanner("THE FLOOR IS OPEN")},2700);
-  cb.onBoss&&cb.onBoss({state:"dead",name:b.st.name,band:b.band});
+  cb.onBoss&&cb.onBoss({state:"dead",name:b.st.name,band:b.band,id:b.id||"sandmaw",defeat:punk?LV.PUNK_BOSS.defeat:null});
 }
 function updateBoss(dt,playing){
   const depth=curDepth();
   if(!boss){if(LV&&playing&&depth>=LV.CRAWLER_MIN_DEPTH_M&&LV.inBossZone(depth)){const band=LV.bossBand(depth);if(!bossDone.has(band))spawnBoss(band)}return}
   const b=boss,st=b.st;
-  if(mode!=="play"){boss=null;return}
+  if(mode!=="play"){boss=null;punkDrops=[];return}
+  if(b.id==="punk")return updatePunk(dt,playing,depth);
   if(playing&&(!LV.inBossZone(depth,25)||LV.bossBand(depth)!==b.band)){addText(P.x-30,P.y-12,"THE SANDMAW SINKS AWAY","#ff2bd6");boss=null;cb.onBoss&&cb.onBoss({state:"gone"});return}
   const enr=b.hp<=b.max*.25?.72:1,pcx=P.x+P.w/2,pcy=P.y+P.h/2;
   b.t+=dt;b.flash=Math.max(0,b.flash-dt);
@@ -437,7 +447,7 @@ function updateBoss(dt,playing){
       break;
     case "lunge":b.y-=st.speed*3.4*dt;bossCarve(b.x,b.y,1);
       if(b.y<=b.top){b.state="exposed";b.t=0;addShake(6);
-        if(b.hp<=b.max*.5&&b.mites<6){const types=LV.crawlersFor(7);for(let i=0;i<2;i++)if(spawnCrawler(depth,types[0],2))b.mites++}}
+        if(b.hp<=b.max*.5&&b.mites<6){const types=LV.CRAWLERS.sands;for(let i=0;i<2;i++)if(spawnCrawler(depth,types[0],2))b.mites++}}
       break;
     case "exposed":b.y+=5*dt;if(b.t>st.exposed*(enr<1?.85:1)){b.state="dive";b.t=0}break;
     case "dive":b.y+=st.speed*2.2*dt;if(b.t>.6){b.state="hunt";b.t=0}break;
@@ -453,12 +463,12 @@ function updateBoss(dt,playing){
 }
 function bossHeadHit(){ // pickaxe on the head: only while it hangs exposed
   const b=boss;if(!b)return false;const hx=P.face>0?P.x+P.w+5:P.x-5,hy=P.aim==="down"?P.y+P.h+5:P.aim==="up"?P.y-5:P.y+5;
-  if(Math.hypot(hx-b.x,hy-b.y)>12)return false;
-  if(b.state==="exposed")bossHurt(fx.melee,"melee");else{addText(b.x-8,b.y-12,"CLANG","#16e0ff");Sfx.play("clink")}
+  if(Math.hypot(hx-b.x,hy-b.y)>(b.id==="punk"?22:12))return false;
+  if(b.state==="exposed")bossHurt(fx.melee,"melee");else{addText(b.x-8,b.y-(b.id==="punk"?30:12),b.id==="punk"?"NOT YET":"CLANG","#16e0ff");Sfx.play("clink")}
   return true;
 }
 function drawBoss(cx,cy,step){
-  const b=boss;if(!b)return;const out=b.state!=="hunt"&&b.state!=="tele"&&b.state!=="warn",C=b.col;
+  const b=boss;if(!b)return;if(b.id==="punk")return drawPunk(cx,cy,step);const out=b.state!=="hunt"&&b.state!=="tele"&&b.state!=="warn",C=b.col;
   const segs=b.segs;
   for(let i=segs.length-1;i>=-1;i--){const s=i<0?b:segs[i];const X=Math.round(s.x-cx),Y=Math.round(s.y-cy),r=i<0?8:Math.max(4,7-Math.floor(i/3));
     if(X<-20||X>VW+20||Y<-20||Y>VH+20)continue;
@@ -477,9 +487,76 @@ function drawBoss(cx,cy,step){
 }
 function drawBossBar(){
   const b=boss;if(!b)return;const w=Math.min(160,VW-40),X=(VW-w)/2|0,Y=30; // top centre: the bottom is where hints + touch controls live
-  const lab=b.st.name+(levelsOn?" · LV "+b.band:"")+(b.hp<=b.max*.25?" · ENRAGED":"");
+  const punk=b.id==="punk",lab=b.st.name+(levelsOn?" · LV "+b.band:"")+(b.hp<=b.max*.25?(punk?" · LOCKED IN":" · ENRAGED"):"");
+  if(punk){const n=LV.PUNK_BOSS.note,nw=PixFont.width(n,1);ctx.fillStyle="rgba(255,255,255,.85)";ctx.fillRect((VW-nw)/2-2,Y+6,nw+4,8);PixFont.draw(ctx,n,(VW-nw)/2|0,Y+7,INK)}
   ctx.fillStyle=INK;ctx.fillRect(X-2,Y-9,w+4,16);PixFont.draw(ctx,lab,X,Y-7,"#ffd400");
   ctx.fillStyle="#fff";ctx.fillRect(X,Y,w,4);ctx.fillStyle=b.flash>0?"#fff":"#ff2bd6";ctx.fillRect(X,Y,Math.round(w*b.hp/b.max),4);
+}
+
+// ---------- Attack of the Punks: Builder #001 (fan tribute, js/levels.js PUNK_BOSS) ----------
+// A friendly final boss on the punks level. It floats above you and challenges you to build:
+// telegraphed "block drops" fall on marked columns, and every third attack it swoops at you and
+// lands dazed for a moment (hit its head then). Below half it calls pixel punks; below a quarter
+// it locks in and speeds up. Never shown while levels are locked (LV.bossFor => 'sandmaw').
+function punkInfo(){return LV&&LV.PUNK_BOSS}
+function spawnPunk(band){
+  const PB=punkInfo(),st=LV.bossStats(band,"punk"),hx=P.x+P.w/2,hy=P.y-6*TS;
+  boss={id:"punk",band,st,hp:st.hp,max:st.hp,state:"float",t:0,x:hx,y:hy,cycle:0,flash:0,ex:hx,ey:hy,cols:[],minions:0,segs:[],say:0,line:0,col:bossColors()};
+  punkDrops=[];
+  showBanner(PB.name+" IS HERE!");addShake(6);Sfx.play("milestone");glitch=.3;
+  if(typeof Multiplayer!=='undefined')Multiplayer.sendEvent({kind:'bossSpawn',boss:'punk'});
+  cb.onBoss&&cb.onBoss({state:"spawn",name:st.name,band,id:"punk",note:PB.note});
+  cb.onCallout&&cb.onCallout(PB.intro+" · "+PB.note);
+  setTimeout(()=>{if(boss&&boss.id==="punk"&&boss.band===band&&mode==="play")showBanner("BUILD ONCHAIN!")},2700);
+}
+function punkSay(b,s){texts.push({x:b.x-PixFont.width(s,1)/2,y:b.y-34,s,c:BLUE,t:0,life:2.2,punk:1})}
+function updatePunk(dt,playing,depth){
+  const b=boss,st=b.st,PB=punkInfo();
+  if(playing&&(!LV.inBossZone(depth,25)||LV.bossBand(depth)!==b.band)){addText(P.x-40,P.y-12,"BUILDER #001: KEEP BUILDING!",BLUE);boss=null;punkDrops=[];cb.onBoss&&cb.onBoss({state:"gone"});return}
+  const enr=b.hp<=b.max*.25?.72:1,pcx=P.x+P.w/2,pcy=P.y+P.h/2;
+  b.t+=dt;b.flash=Math.max(0,b.flash-dt);b.say-=dt;
+  if(b.say<=0&&b.state==="float"){b.say=4.5;punkSay(b,PB.lines[b.line++%PB.lines.length])}
+  switch(b.state){
+    case "float":bossMove(b,pcx+Math.sin(time*1.1)*4*TS,pcy-3.5*TS+Math.sin(time*2.3)*6,st.speed,dt);
+      if(b.t>st.dropEvery*enr){b.t=0;b.cycle++;
+        if(b.cycle%st.swoopEvery===0){b.state="aim";b.ex=pcx;b.ey=pcy;Sfx.play("sweep");texts.push({x:pcx-16,y:P.y-18,s:"INCOMING!",c:"#ff2bd6",t:0,life:.9})}
+        else{b.state="mark";const c0=Math.floor(pcx/TS),n=enr<1?4:3;b.cols=[c0];
+          for(let k=1;b.cols.length<n&&k<10;k++){const c=c0+(rng()<.5?-1:1)*(2+Math.floor(rng()*5));if(c>0&&c<W-1&&!b.cols.includes(c))b.cols.push(c)}
+          Sfx.play("whistle")}}
+      break;
+    case "mark":bossMove(b,pcx,pcy-3.5*TS,st.speed*.6,dt);
+      if(b.t>.9*enr){b.t=0;b.state="float";const top=P.y-8*TS;
+        for(const c of b.cols)punkDrops.push({x:c*TS+TS/2,y:top-rng()*TS,vy:40+rng()*30});
+        if(b.hp<=b.max*.5&&b.minions<6){const types=LV.crawlersFor(b.band);for(let i=0;i<2;i++)if(spawnCrawler(depth,types[i%types.length],3))b.minions++}}
+      break;
+    case "aim":bossMove(b,b.x,b.y-4,20,dt);if(b.t>.7*enr){b.state="swoop";b.t=0}break;
+    case "swoop":{bossMove(b,b.ex,b.ey,st.speed*3.6,dt);bossCarve(b.x,b.y,1);
+      if(Math.hypot(b.ex-b.x,b.ey-b.y)<3||b.t>1.2){b.state="exposed";b.t=0;addShake(6);Sfx.play("boom");burst(b.x,b.y,24,[BLUE,"#fff","#16e0ff"],120);punkSay(b,"GM? ...DAZED")}}break;
+    case "exposed":if(b.t>st.exposed*(enr<1?.85:1)){b.state="rise";b.t=0}break;
+    case "rise":b.y-=st.speed*1.4*dt;if(b.t>.8){b.state="float";b.t=0}break;
+  }
+  for(const d of punkDrops){d.vy=Math.min(260,d.vy+380*dt);d.y+=d.vy*dt;
+    if(playing&&Math.abs(d.x-pcx)<7&&Math.abs(d.y-pcy)<8){d.dead=1;hurt(st.damage,d.x,d.y);burst(d.x,d.y,8,[BLUE,"#fff"],80)}
+    if(d.y>P.y+10*TS)d.dead=1}
+  punkDrops=punkDrops.filter(d=>!d.dead);
+  if(playing&&b.state==="swoop"&&Math.hypot(pcx-b.x,pcy-b.y)<16)hurt(st.damage,b.x,b.y);
+}
+function drawPunk(cx,cy,step){
+  const b=boss,PB=punkInfo(),rows=PB.sprite,pal=PB.palette,S2=2,n=rows.length;
+  const X0=Math.round(b.x-cx-n*S2/2),Y0=Math.round(b.y-cy-n*S2/2-4);
+  // drop markers + falling Base blocks
+  if(b.state==="mark"&&step%2)for(const c of b.cols){const X=c*TS-cx;ctx.fillStyle="rgba(0,82,255,.25)";ctx.fillRect(X+3,0,TS-6,VH);PixFont.draw(ctx,"!",X+5,Math.round(P.y-cy-30),"#ff2bd6")}
+  for(const d of punkDrops){const X=Math.round(d.x-cx),Y=Math.round(d.y-cy);ctx.fillStyle="#fff";ctx.fillRect(X-5,Y-5,10,10);ctx.fillStyle=BLUE;ctx.fillRect(X-4,Y-4,8,8);ctx.fillStyle="#fff";ctx.fillRect(X-2,Y-1,5,2)}
+  if(b.state==="aim"&&step%2){ctx.fillStyle="#ff2bd6";const sx=b.x-cx,sy=b.y-cy,ex=b.ex-cx,ey=b.ey-cy;for(let i=0;i<=12;i++)ctx.fillRect(Math.round(sx+(ex-sx)*i/12),Math.round(sy+(ey-sy)*i/12),2,2)}
+  // the PFP: white halo, then the 24x24 sprite at 2x (the swoop leaves a blue trail)
+  const tilt=b.state==="exposed"?Math.round(Math.sin(time*9)*2):0;
+  ctx.fillStyle=b.flash>0?"#ff2bd6":"#fff";
+  for(let j=0;j<n;j++){const r=rows[j];for(let i=0;i<r.length;i++)if(r[i]!==".")ctx.fillRect(X0+i*S2-2+tilt,Y0+j*S2-2,S2+4,S2+4)}
+  for(let j=0;j<n;j++){const r=rows[j];for(let i=0;i<r.length;i++){const ch=r[i];if(ch===".")continue;
+    ctx.fillStyle=b.flash>0?"#fff":pal[ch]||INK;ctx.fillRect(X0+i*S2+tilt,Y0+j*S2,S2,S2)}}
+  if(b.state==="swoop"){ctx.fillStyle="rgba(0,82,255,.35)";ctx.fillRect(X0-4,Y0+4,n*S2+8,n*S2-8)}
+  if(b.state==="exposed"){for(let k=0;k<3;k++){const an=time*5+k*2.1;ctx.fillStyle=k%2?"#ffd400":"#16e0ff";ctx.fillRect(Math.round(b.x-cx+Math.cos(an)*16)-1,Math.round(Y0-4+Math.sin(an)*4),3,3)}
+    if(step%2){ctx.fillStyle="#ff2bd6";ctx.fillRect(Math.round(b.x-cx)-1,Y0-10,3,3)}}
 }
 
 // ---------- teleport + elevator ----------
@@ -551,7 +628,7 @@ function dig(){
   const hx=x*TS+6,hy=y*TS+6;
   if(!SOLID.has(t)){Sfx.play("dig",1);return}
   if(t===T.BED){Sfx.play("clink");burst(hx,hy,4,["#fff","#16e0ff"],60);return}
-  if(t===T.GATE&&boss){Sfx.play("clink");burst(hx,hy,4,[TAN,"#ffd400"],60);if(!texts.some(q=>q.guard))texts.push({x:hx-40,y:hy-10,s:"SANDMAW GUARDS THE FLOOR",c:"#ff2bd6",t:0,life:1.4,guard:true});return}
+  if(t===T.GATE&&boss){Sfx.play("clink");burst(hx,hy,4,[TAN,"#ffd400"],60);if(!texts.some(q=>q.guard))texts.push({x:hx-40,y:hy-10,s:boss.st.name+" GUARDS THE FLOOR",c:"#ff2bd6",t:0,life:1.4,guard:true});return}
   const soft=t===T.DIRT||t===T.CLAY||t===T.GEM;
   hp[y][x]=Math.max(0,hp[y][x]-(fx.softDouble&&soft?2:1));
   if(fx.oneShot&&t!==T.GATE&&t!==T.UXB&&hp[y][x]>0&&rng()<fx.oneShot){hp[y][x]=0;addText(hx-8,hy-12,"CRACK!","#16e0ff")}
@@ -769,7 +846,8 @@ function update(dt){
 function enterLevel(L,down){
   const th=LV?LV.themeFor(L):null;
   if(down&&L>1&&th){const ch=LV.levelChapter(L);showBanner("LEVEL "+L+" · "+th.displayName.toUpperCase());flash=.25;glitch=.5;Sfx.play("milestone");
-    setTimeout(()=>{if(curLevel===L&&mode==="play")showBanner(ch.name.toUpperCase()+" CAMPAIGN")},2700)}
+    setTimeout(()=>{if(curLevel===L&&mode==="play")showBanner(ch.name.toUpperCase()+" CAMPAIGN")},2700);
+    if(th.mottos&&th.mottos.length){setTimeout(()=>{if(curLevel===L&&mode==="play")showBanner(th.mottos[0])},5400);cb.onCallout&&cb.onCallout(th.displayName.toUpperCase()+" · "+th.mottos.join(" · "))}}
   crawlers=[];spits=[];timers.crawl=4;
   if(typeof Campaign!=='undefined')Campaign.note('level',0,L);
   cb.onLevelEnter&&cb.onLevelEnter(L,th,down);hud(true);
@@ -1138,7 +1216,7 @@ const Game={
   nearElevator,
   elevatorStops:localElevatorStops,
   get teleportCooldown(){return Math.ceil(tpCd)},
-  get boss(){return boss?{name:boss.st.name,hp:boss.hp,max:boss.max,band:boss.band,state:boss.state}:null},
+  get boss(){return boss?{id:boss.id||"sandmaw",name:boss.st.name,hp:boss.hp,max:boss.max,band:boss.band,state:boss.state}:null},
   _debug:{get P(){return P},explode,get state(){return{mult,lives,maxDepth,curLevel,crawlers:crawlers.length,boss:boss&&{hp:boss.hp,max:boss.max,state:boss.state},bossDone:[...bossDone],tpCd}},bump,showBanner,hurt,setInv:v=>inv=v,
     // screenshot / test helpers
     spawnCrawler(id){const all=LV?Object.values(LV.CRAWLERS).flat():[CRAWL_FALLBACK];const ty=all.find(c=>c.id===id)||all[0];return spawnCrawler(curDepth(),ty,2)},

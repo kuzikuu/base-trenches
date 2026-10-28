@@ -62,7 +62,7 @@ function onLevelEnter(L,theme,down){
 }
 Game.init($("#game"),{onHud,onHit,onOver,onLevelEnter,onHint:t=>hint(t),onOpen:id=>openPanel(id),
   onElevator:()=>openPanel('elevator'),onCallout:t=>hint(t,3800),onTeleport:()=>paintTp(),
-  onBoss:e=>{if(e.state==='spawn')Haptics.notification('warning');else if(e.state==='dead'){Haptics.notification('success');hint(e.name+' FELLED · +3 LIVES · BOSS XP',4000)}}});
+  onBoss:e=>{if(e.state==='spawn')Haptics.notification('warning');else if(e.state==='dead'){Haptics.notification('success');hint(e.id==='punk'?'GG! '+e.name+' CHALLENGE COMPLETE · +3 LIVES · BOSS XP':e.name+' FELLED · +3 LIVES · BOSS XP',4000)}}});
 
 async function start(){
   $("#title").classList.add("hidden");$("#over").classList.add("hidden");$("#hud").classList.remove("hidden");

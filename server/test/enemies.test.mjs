@@ -28,7 +28,7 @@ test('every theme has two original crawlers with known behaviours', () => {
 });
 
 test('desert theme is level 2 and the other themes shift down one', () => {
-  assert.deepEqual(THEMES.map(t => t.id), ['trenches', 'sands', 'mines', 'chalk', 'flooded', 'ember', 'core']);
+  assert.deepEqual(THEMES.map(t => t.id), ['trenches', 'sands', 'mines', 'chalk', 'flooded', 'ember', 'core', 'punks']);
   assert.equal(themeFor(1).id, 'trenches');
   assert.equal(themeFor(2).id, 'sands');
   assert.equal(themeFor(3).id, 'mines');
@@ -84,7 +84,7 @@ test('bossKill needs a spawn the room saw in the same band, 15 s of fight, once 
   const t0 = 1_000_000, yZone = yForDepth(545), slain = new Set();
   assert.equal(noteBossSpawn({ playerY: yForDepth(200), now: t0 }), null, 'no spawn outside the zone');
   const boss = noteBossSpawn({ playerY: yZone, now: t0 });
-  assert.deepEqual(boss, { band: 1, t: t0 });
+  assert.deepEqual(boss, { band: 1, t: t0, id: 'sandmaw' });
   assert.equal(validateBossKill({ boss: null, slain, playerY: yZone, now: t0 + 20000 }).reason, 'no_spawn');
   assert.equal(validateBossKill({ boss, slain, playerY: yZone, now: t0 + 3000 }).reason, 'too_fast');
   assert.equal(validateBossKill({ boss, slain, playerY: yForDepth(100), now: t0 + 20000 }).reason, 'not_in_zone');

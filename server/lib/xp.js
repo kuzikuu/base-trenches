@@ -1,6 +1,6 @@
 // Server-authoritative XP: score validated events with per-kind and per-minute caps.
 // Used by TrenchRoom and by node tests. No Durable Object APIs here.
-import { killXp, bossXp, inBossZone, bossBand, CRAWLER_MIN_DEPTH_M, BOSS_MIN_FIGHT_MS } from './levels.js';
+import { killXp, bossXp, inBossZone, bossBand, CRAWLER_MIN_DEPTH_M, BOSS_MIN_FIGHT_MS, bossFor, bossMinFightMs } from './levels.js';
 
 export const XP = {
   DIG: 1,
@@ -139,17 +139,24 @@ export function validateBossKill({ boss, slain, playerY, now = Date.now() } = {}
   if (!inBossZone(depth, 12)) return { ok: false, reason: 'not_in_zone' };
   const band = bossBand(depth);
   if (!boss || boss.band !== band) return { ok: false, reason: 'no_spawn' };
-  if (now - boss.t < BOSS_MIN_FIGHT_MS) return { ok: false, reason: 'too_fast' };
+  if (now - boss.t < (boss.id ? bossMinFightMs(boss.id) : BOSS_MIN_FIGHT_MS)) return { ok: false, reason: 'too_fast' };
   if (slain && slain.has(band)) return { ok: false, reason: 'already_slain' };
   return { ok: true, band, depth };
 }
 
-/** Boss spawn notice: only counts inside a boss zone. */
-export function noteBossSpawn({ playerY, now = Date.now() } = {}) {
+/**
+ * Boss spawn notice: only counts inside a boss zone. `claimed` is the boss the client says woke up;
+ * it must be the one that guards this band (bossFor), so e.g. a punk-boss spawn is refused while
+ * levels are locked. The id sets the minimum fight time for the kill.
+ */
+export function noteBossSpawn({ playerY, now = Date.now(), claimed, unlocked = false } = {}) {
   if (playerY == null || !Number.isFinite(Number(playerY))) return null;
   const depth = depthFromY(playerY);
   if (!inBossZone(depth, 4)) return null;
-  return { band: bossBand(depth), t: now };
+  const band = bossBand(depth);
+  const id = bossFor(band, unlocked);
+  if (claimed != null && claimed !== id) return null;
+  return { band, t: now, id };
 }
 
 export function validateDepth({ depth, lastAwarded = 0, playerY } = {}) {

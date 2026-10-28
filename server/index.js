@@ -678,7 +678,7 @@ export class TrenchRoom {
     if (kind === 'dig') return this.handleDig(ws, data, attachment);
     if (kind === 'bossSpawn') {
       // No XP: just start the fight clock if the room agrees the trencher is in a boss zone.
-      const sp = noteBossSpawn({ playerY: attachment.y, now: Date.now() });
+      const sp = noteBossSpawn({ playerY: attachment.y, now: Date.now(), claimed: typeof data.boss === 'string' ? data.boss : undefined, unlocked: levelsUnlocked(this.env) });
       const prev = this.bossSpawns.get(attachment.sessionId);
       if (sp && !(prev && prev.band === sp.band)) this.bossSpawns.set(attachment.sessionId, sp);
       return;
@@ -1040,7 +1040,7 @@ export class Profiles {
     const newLevel = levelFromXp(newXp);
 
     let gearDrop = null;
-    // First Sandmaw kill in each level band: a guaranteed gear drop (repeat kills pay XP only).
+    // First boss kill (Sandmaw or Builder #001) in each level band: a guaranteed gear drop (repeat kills pay XP only).
     let bosses = {};
     try { bosses = JSON.parse(row.bosses || '{}') || {}; } catch (e) { bosses = {}; }
     let bossFirst = false;
