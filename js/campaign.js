@@ -12,7 +12,7 @@ const CHAPTERS = [
       { id: 'bt-dig-25', type: 'dig', target: 25, title: 'First Shaft', desc: 'Dig 25 meters down.', xp: 25 },
       { id: 'bt-survive-3', type: 'survive', target: 3, title: 'Keep Your Head Down', desc: 'Survive 3 artillery barrages.', xp: 25 },
       { id: 'bt-relic', type: 'relic', target: 1, title: 'Training Relic', desc: 'Find the mess-tin relic in the clay.', xp: 40 },
-      { id: 'bt-boss', type: 'boss', target: 1, title: 'The Drill Sergeant', desc: 'Boss raid: hold the training trench.', xp: 100, boss: true }
+      { id: 'bt-boss', type: 'boss', target: 1, title: 'The Drill Sergeant', desc: 'Boss raid: hold the training trench. Survive 5 barrages in one run.', xp: 100, boss: true }
     ],
     rewards: { title: 'Recruit', gear: { type: 'helmet', name: 'Tin Helmet', rarity: 1 } }
   },
@@ -26,7 +26,7 @@ const CHAPTERS = [
       { id: 'tf-survive-8', type: 'survive', target: 8, title: 'Under Fire', desc: 'Survive 8 barrages.', xp: 35 },
       { id: 'tf-dodge-10', type: 'dodge', target: 10, title: 'Sweep Dodger', desc: 'Dodge 10 machine-gun sweeps.', xp: 30 },
       { id: 'tf-relic', type: 'relic', target: 1, title: 'Front Relic', desc: 'Find the periscope relic.', xp: 45 },
-      { id: 'tf-boss', type: 'boss', target: 1, title: 'Machine-Gun Nest', desc: 'Boss raid: silence the nest.', xp: 120, boss: true }
+      { id: 'tf-boss', type: 'boss', target: 1, title: 'Machine-Gun Nest', desc: 'Boss raid: silence the nest. Survive 5 barrages in one run.', xp: 120, boss: true }
     ],
     rewards: { title: 'Frontliner', gear: { type: 'pickaxe', name: 'Iron Pick', rarity: 1 } }
   },
@@ -40,7 +40,7 @@ const CHAPTERS = [
       { id: 'nml-survive-12', type: 'survive', target: 12, title: 'Crater Watch', desc: 'Survive 12 barrages.', xp: 45 },
       { id: 'nml-relic', type: 'relic', target: 1, title: 'Lost Relic', desc: 'Find the wire-cutter relic.', xp: 50 },
       { id: 'nml-squad', type: 'squad', target: 1, title: 'Squad Objective', desc: 'Finish a shared squad objective.', xp: 50 },
-      { id: 'nml-boss', type: 'boss', target: 1, title: 'Night Raid', desc: 'Boss raid: cross no man\'s land after dark.', xp: 150, boss: true }
+      { id: 'nml-boss', type: 'boss', target: 1, title: 'Night Raid', desc: 'Boss raid: cross no man\'s land after dark. Survive 5 barrages in one run.', xp: 150, boss: true }
     ],
     rewards: { title: 'Raider', gear: { type: 'boots', name: "Runner's Boots", rarity: 2 } }
   },
@@ -54,7 +54,7 @@ const CHAPTERS = [
       { id: 'ott-survive-20', type: 'survive', target: 20, title: 'Creeping Barrage', desc: 'Survive 20 barrages.', xp: 55 },
       { id: 'ott-dodge-25', type: 'dodge', target: 25, title: 'Over the Parapet', desc: 'Dodge 25 sweeps.', xp: 45 },
       { id: 'ott-relic', type: 'relic', target: 1, title: 'Command Relic', desc: 'Find the whistle relic.', xp: 60 },
-      { id: 'ott-boss', type: 'boss', target: 1, title: 'The Whistle', desc: 'Boss raid: go over the top.', xp: 180, boss: true }
+      { id: 'ott-boss', type: 'boss', target: 1, title: 'The Whistle', desc: 'Boss raid: go over the top. Survive 5 barrages in one run.', xp: 180, boss: true }
     ],
     rewards: { title: 'Veteran', gear: { type: 'charm', name: "Rabbit's Foot", rarity: 2 } }
   },
@@ -68,7 +68,7 @@ const CHAPTERS = [
       { id: 'tbp-survive-30', type: 'survive', target: 30, title: 'The Big Noise', desc: 'Survive 30 barrages.', xp: 70 },
       { id: 'tbp-relic', type: 'relic', target: 1, title: '589 Relic', desc: 'Find the 589 relic.', xp: 80 },
       { id: 'tbp-squad', type: 'squad', target: 1, title: 'The Nine', desc: 'Complete a squad objective of 9.', xp: 80 },
-      { id: 'tbp-boss', type: 'boss', target: 1, title: 'Zero Hour', desc: 'Boss raid: the big push.', xp: 250, boss: true }
+      { id: 'tbp-boss', type: 'boss', target: 1, title: 'Zero Hour', desc: 'Boss raid: the big push. Survive 5 barrages in one run.', xp: 250, boss: true }
     ],
     rewards: { title: '589 Manifested', gear: { type: 'pickaxe', name: "Trencher's Fury", rarity: 4 } }
   }
@@ -81,7 +81,27 @@ function emptyProgress() {
 }
 
 let progress = emptyProgress();
-const session = { survive: 0, dodge: 0, relic: 0, depth: 0 };
+const session = { survive: 0, dodge: 0, relic: 0, depth: 0, raid: 0 };
+// Boss raid: once a chapter's other missions are done, survive RAID_SURVIVES barrages in
+// one run. The server checks the same count for the session before accepting it.
+const RAID_SURVIVES = 5;
+const sentAt = {};
+
+function banner(text) {
+  if (typeof Game !== 'undefined' && Game._debug && Game._debug.showBanner) Game._debug.showBanner(text);
+}
+
+function readyBoss() {
+  for (const ch of CHAPTERS) {
+    const prev = CHAPTERS[ch.index - 1];
+    if (prev && !prev.missions.filter(m => m.boss).every(m => progress.completed[m.id])) return null;
+    const boss = ch.missions.find(m => m.boss);
+    if (!boss || progress.completed[boss.id]) continue;
+    const others = ch.missions.filter(m => !m.boss);
+    return others.every(m => progress.completed[m.id]) ? boss : null;
+  }
+  return null;
+}
 
 function applyServer(pub) {
   if (!pub) return;
@@ -104,6 +124,14 @@ function note(kind, amount) {
     session[kind] = (session[kind] || 0) + (amount || 1);
     progress.stats[kind] = (progress.stats[kind] || 0) + (amount || 1);
   }
+  if (kind === 'survive') {
+    const boss = readyBoss();
+    if (boss) {
+      session.raid++;
+      if (session.raid >= RAID_SURVIVES) { session.raid = 0; progress.stats.boss = (progress.stats.boss || 0) + 1; }
+      else banner(`RAID ${session.raid}/${RAID_SURVIVES}`);
+    }
+  }
   tryComplete();
 }
 
@@ -119,13 +147,15 @@ function tryComplete() {
       const key = m.type === 'dig' ? 'depth' : m.type;
       if ((progress.stats[key] || 0) < m.target) break;
       if (typeof Multiplayer !== 'undefined' && Multiplayer.connected) {
+        // Wait for the server's answer instead of re-sending on every dig.
+        if (sentAt[m.id] && Date.now() - sentAt[m.id] < 15000) break;
+        sentAt[m.id] = Date.now();
         Multiplayer.sendEvent({ kind: m.boss ? 'boss' : 'mission', chapterId: ch.id, missionId: m.id });
       } else {
         progress.completed[m.id] = Date.now();
       }
-      if (typeof Game !== 'undefined' && Game._debug && Game._debug.showBanner) {
-        Game._debug.showBanner((m.boss ? 'RAID ' : 'MISSION ') + m.title.toUpperCase());
-      }
+      banner((m.boss ? 'RAID ' : 'MISSION ') + m.title.toUpperCase());
+      break;
     }
   }
 }

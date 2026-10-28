@@ -13,7 +13,9 @@ import {
   TILE_SIZE,
   TRENCH_FLOOR_TILE,
   DEPTH_STEP_M,
-  levelFromXp
+  levelFromXp,
+  SERVER_XP_KINDS,
+  REWARD_WINDOW_MS
 } from './lib/xp.js';
 import {
   normalizeProgress,
@@ -43,6 +45,7 @@ const CHAT_RATE_LIMIT_MS = 2000;
 const CHAT_MAX_LENGTH = 60;
 const IDLE_MS = 15_000;
 const SQUAD_MAX = 9;
+const RAID_SURVIVES = 5; // boss raid = survive this many barrages in one session (js/campaign.js)
 
 const PROFANITY_WORDS = ['fuck', 'shit', 'ass', 'bitch', 'damn', 'cunt', 'dick', 'cock', 'pussy', 'fag', 'nigger', 'retard'];
 
@@ -150,6 +153,12 @@ export class TrenchRoom {
     this.state = state;
     this.env = env;
     this.dugBlocks = new Map();
+    // Per-session XP windows and recent digs live in memory, not in the WebSocket
+    // attachment (attachments are size-capped and rewritten on every message).
+    // Hibernation only happens when the room is idle, so losing them then is harmless.
+    this.xpWindows = new Map();
+    this.recentDigs = new Map();
+    this.raidSurvives = new Map(); // sessionId -> barrages survived since the last boss raid
     this.lastBroadcast = 0;
     this.seed = null;
     this.state.blockConcurrencyWhile(async () => {
@@ -177,7 +186,6 @@ export class TrenchRoom {
         sessionId,
         verifiedProfileId,
         joined: Date.now(),
-        xpWindow: createXpWindow(),
         lastDepthAwarded: 0
       });
       return new Response(null, { status: 101, webSocket: client });
@@ -224,6 +232,7 @@ export class TrenchRoom {
 
   async webSocketClose(ws, code, reason) {
     const attachment = ws.deserializeAttachment() || {};
+    if (attachment.sessionId) { this.xpWindows.delete(attachment.sessionId); this.raidSurvives.delete(attachment.sessionId); }
     try { ws.close(code === 1005 ? 1000 : code, reason); } catch (e) {}
     if (attachment.playerId) {
       const playerCount = this.getActivePlayers(ws).length;
@@ -242,11 +251,11 @@ export class TrenchRoom {
     attachment.name = filterProfanity(String(data.name || 'Trencher').slice(0, 20));
     attachment.pfp = typeof data.pfp === 'string' && /^https:\/\//.test(data.pfp) ? data.pfp.slice(0, 512) : null;
     attachment.level = Math.max(1, Math.min(999, Math.floor(Number(data.level)) || 1));
-    attachment.equipped = data.equipped || {};
+    attachment.equipped = data.equipped && typeof data.equipped === 'object' && JSON.stringify(data.equipped).length < 2048 ? data.equipped : {};
     attachment.xHandle = sanitizeHandle(data.xHandle || data.x_handle);
     attachment.lastUpdate = Date.now();
     attachment.lastChat = 0;
-    attachment.xpWindow = createXpWindow();
+    this.xpWindows.set(attachment.sessionId, createXpWindow());
     attachment.lastDepthAwarded = 0;
     ws.serializeAttachment(attachment);
 
@@ -301,13 +310,35 @@ export class TrenchRoom {
   async handleDig(ws, data, attachment) {
     if (!attachment.playerId) return;
     const now = Date.now();
-    const scored = await this.creditEvent(ws, attachment, { kind: 'dig', x: data.x, y: data.y }, now);
-    if (!scored || !scored.ok) return;
     const bx = Math.floor(Number(data.x)), by = Math.floor(Number(data.y));
-    this.dugBlocks.set(tileKey(bx, by), now);
+    if (!Number.isFinite(bx) || !Number.isFinite(by)) return;
+    const key = tileKey(bx, by);
+    // Score against the map *before* marking the tile, so only the first digger earns XP.
+    const ctx = this.scoreCtx(attachment, now);
+    const scored = scoreValidatedEvent({ kind: 'dig', x: bx, y: by }, ctx);
+    // World sync is never gated by XP caps (same as before): every dig is shared.
+    this.dugBlocks.set(key, now);
+    if (scored.ok) this.recentDigs.set(key, { by: attachment.sessionId, t: now, claimed: new Set() });
     const cutoff = now - 300000;
     for (const [k, t] of this.dugBlocks) if (t < cutoff) this.dugBlocks.delete(k);
+    for (const [k, r] of this.recentDigs) if (now - r.t > REWARD_WINDOW_MS) this.recentDigs.delete(k);
     this.broadcast({ type: 'dig', playerId: attachment.playerId, x: bx, y: by });
+    if (scored.ok) await this.creditScored(ws, attachment, { kind: 'dig', x: bx, y: by }, scored);
+  }
+
+  scoreCtx(attachment, now) {
+    let win = this.xpWindows.get(attachment.sessionId);
+    if (!win) { win = createXpWindow(); this.xpWindows.set(attachment.sessionId, win); }
+    return {
+      dugSet: this.dugBlocks,
+      recentDigs: this.recentDigs,
+      sessionId: attachment.sessionId,
+      playerX: attachment.x,
+      playerY: attachment.y,
+      lastDepthAwarded: attachment.lastDepthAwarded || 0,
+      now,
+      window: win
+    };
   }
 
   async handleChat(ws, data, attachment) {
@@ -331,21 +362,23 @@ export class TrenchRoom {
   }
 
   async creditEvent(ws, attachment, event, now) {
-    const ctx = {
-      dugSet: this.dugBlocks,
-      playerX: attachment.x,
-      playerY: attachment.y,
-      lastDepthAwarded: attachment.lastDepthAwarded || 0,
-      now,
-      window: attachment.xpWindow || createXpWindow()
-    };
-    const result = scoreValidatedEvent(event, ctx);
-    attachment.xpWindow = result.window || ctx.window;
+    const sid = attachment.sessionId;
+    if (event.kind === 'boss' && (this.raidSurvives.get(sid) || 0) < RAID_SURVIVES) {
+      return { ok: false, reason: 'raid_not_done', xp: 0 };
+    }
+    const result = scoreValidatedEvent(event, this.scoreCtx(attachment, now));
+    if (result.ok && event.kind === 'survive') this.raidSurvives.set(sid, (this.raidSurvives.get(sid) || 0) + 1);
+    if (result.ok && event.kind === 'boss') this.raidSurvives.set(sid, 0);
     if (event.kind === 'depth' && result.ok) {
       attachment.lastDepthAwarded = Math.max(attachment.lastDepthAwarded || 0, Math.floor(Number(event.depth) || 0));
+      ws.serializeAttachment(attachment);
     }
-    ws.serializeAttachment(attachment);
-    if (!result.ok || !result.xp) return result;
+    return this.creditScored(ws, attachment, event, result);
+  }
+
+  async creditScored(ws, attachment, event, result) {
+    const serverXp = SERVER_XP_KINDS.has(event.kind);
+    if (!result.ok || (!result.xp && !serverXp)) return result;
 
     const profileId = attachment.verifiedProfileId;
     if (!profileId) return result;
@@ -359,8 +392,8 @@ export class TrenchRoom {
         xp: result.xp,
         depth,
         eventKind: event.kind,
-        chapterId: event.chapterId,
-        missionId: event.missionId,
+        chapterId: typeof event.chapterId === 'string' ? event.chapterId.slice(0, 40) : undefined,
+        missionId: typeof event.missionId === 'string' ? event.missionId.slice(0, 40) : undefined,
         name: attachment.name
       })
     }));
@@ -369,7 +402,7 @@ export class TrenchRoom {
       if (credited.newLevel) attachment.level = credited.newLevel;
       ws.serializeAttachment(attachment);
       try { ws.send(JSON.stringify({ type: 'xp', ...credited })); } catch (e) {}
-      await this.maybeEventScore(profileId, attachment.name, result.xp);
+      if (credited.added > 0) await this.maybeEventScore(profileId, attachment.name, credited.added);
     }
     return result;
   }
@@ -598,9 +631,9 @@ export class Profiles {
     const results = this.sql.exec('SELECT * FROM profiles WHERE id = ?', profileId).toArray();
     if (!results.length) return Response.json({ success: false });
     const row = results[0];
-    const add = Math.max(0, Math.floor(Number(xp) || 0));
-    const newXp = (row.xp || 0) + add;
-    const newLevel = levelFromXp(newXp);
+    if (row.migrated_to) return Response.json({ success: false, error: 'migrated' });
+    // Room-scored XP is already capped; mission/boss XP is added below only on completion.
+    let add = SERVER_XP_KINDS.has(eventKind) ? 0 : Math.max(0, Math.min(250, Math.floor(Number(xp) || 0)));
     const newBestDepth = Math.max(row.best_depth || 0, Math.floor(Number(depth) || 0));
     let campaign = normalizeProgress(JSON.parse(row.campaign || '{}'));
     let titles = JSON.parse(row.titles || '[]');
@@ -618,6 +651,7 @@ export class Profiles {
     if (eventKind === 'mission' || eventKind === 'boss') {
       const done = completeMission(campaign, chapterId, missionId || (eventKind === 'boss' ? undefined : missionId));
       if (done.ok) {
+        add += Math.max(0, Math.floor(Number(done.xp) || 0));
         campaign = done.progress;
         titles = campaign.titles;
         for (const r of done.rewards) {
@@ -629,6 +663,9 @@ export class Profiles {
         }
       }
     }
+
+    const newXp = (row.xp || 0) + add;
+    const newLevel = levelFromXp(newXp);
 
     let gearDrop = null;
     if (Math.random() < 0.02 && depth > 10 && add > 0) {
@@ -657,6 +694,7 @@ export class Profiles {
 
     return Response.json({
       success: true,
+      added: add,
       newXp,
       newLevel,
       leveledUp: newLevel > row.level,
@@ -675,7 +713,10 @@ export class Profiles {
     const src = this.sql.exec('SELECT * FROM profiles WHERE id = ?', fromId).toArray();
     if (!src.length) return Response.json({ success: false, error: 'source missing' }, { status: 404 });
     if (src[0].migrated_to) return Response.json({ success: false, error: 'already migrated' }, { status: 409 });
-    if (fromId.startsWith('guest:') && src[0].secret_hash && src[0].secret_hash !== secretHash) {
+    // A guest profile can only be claimed with its secret. Legacy guests with no stored
+    // secret can't prove ownership, so they can't be migrated (otherwise anyone who knows
+    // the guest id could take its XP and inventory).
+    if (fromId.startsWith('guest:') && (!src[0].secret_hash || !secretHash || src[0].secret_hash !== secretHash)) {
       return Response.json({ success: false, error: 'Not your profile' }, { status: 403 });
     }
     const now = Date.now();
@@ -701,8 +742,19 @@ export class Profiles {
     }
     this.sql.exec('UPDATE profiles SET migrated_to = ?, updated_at = ? WHERE id = ?', toId, now, fromId);
     if (s.squad_id) {
-      this.sql.exec('UPDATE squad_members SET profile_id = ? WHERE profile_id = ?', toId, fromId);
-      this.sql.exec('UPDATE squads SET leader_id = ? WHERE leader_id = ?', toId, fromId);
+      const destSquad = dest.length ? dest[0].squad_id : null;
+      if (destSquad && destSquad !== s.squad_id) {
+        // Destination already has a squad: drop the guest's membership instead of being in two.
+        this.sql.exec('DELETE FROM squad_members WHERE squad_id = ? AND profile_id = ?', s.squad_id, fromId);
+        const left = this.sql.exec('SELECT profile_id FROM squad_members WHERE squad_id = ? ORDER BY joined_at', s.squad_id).toArray();
+        if (!left.length) this.sql.exec('DELETE FROM squads WHERE id = ?', s.squad_id);
+        else this.sql.exec('UPDATE squads SET leader_id = ? WHERE id = ? AND leader_id = ?', left[0].profile_id, s.squad_id, fromId);
+      } else {
+        this.sql.exec('DELETE FROM squad_members WHERE squad_id = ? AND profile_id = ?', s.squad_id, toId);
+        this.sql.exec('UPDATE squad_members SET profile_id = ? WHERE profile_id = ?', toId, fromId);
+        this.sql.exec('UPDATE squads SET leader_id = ? WHERE leader_id = ?', toId, fromId);
+      }
+      this.sql.exec('UPDATE profiles SET squad_id = NULL WHERE id = ?', fromId);
     }
     const fresh = this.sql.exec('SELECT * FROM profiles WHERE id = ?', toId).toArray();
     return Response.json({ success: true, profile: this.rowToProfile(fresh[0]) });
@@ -721,8 +773,9 @@ export class Profiles {
 
   async createSquad({ profileId, name, objective, target }) {
     if (!profileId) return Response.json({ success: false, error: 'auth' }, { status: 401 });
-    const me = this.sql.exec('SELECT squad_id FROM profiles WHERE id = ?', profileId).toArray();
-    if (me.length && me[0].squad_id) return Response.json({ success: false, error: 'already in a squad' }, { status: 409 });
+    const me = this.sql.exec('SELECT squad_id, migrated_to FROM profiles WHERE id = ?', profileId).toArray();
+    if (!me.length || me[0].migrated_to) return Response.json({ success: false, error: 'save your profile first' }, { status: 404 });
+    if (me[0].squad_id) return Response.json({ success: false, error: 'already in a squad' }, { status: 409 });
     const id = crypto.randomUUID();
     let code = squadCode();
     for (let i = 0; i < 8 && this.sql.exec('SELECT 1 AS x FROM squads WHERE code = ?', code).toArray().length; i++) code = squadCode();
@@ -744,8 +797,9 @@ export class Profiles {
     if (!sq) return Response.json({ success: false, error: 'unknown code' }, { status: 404 });
     const n = this.sql.exec('SELECT COUNT(*) AS n FROM squad_members WHERE squad_id = ?', sq.id).toArray()[0].n;
     if (n >= SQUAD_MAX) return Response.json({ success: false, error: 'squad full' }, { status: 409 });
-    const me = this.sql.exec('SELECT squad_id FROM profiles WHERE id = ?', profileId).toArray()[0];
-    if (me && me.squad_id && me.squad_id !== sq.id) return Response.json({ success: false, error: 'already in a squad' }, { status: 409 });
+    const me = this.sql.exec('SELECT squad_id, migrated_to FROM profiles WHERE id = ?', profileId).toArray()[0];
+    if (!me || me.migrated_to) return Response.json({ success: false, error: 'save your profile first' }, { status: 404 });
+    if (me.squad_id && me.squad_id !== sq.id) return Response.json({ success: false, error: 'already in a squad' }, { status: 409 });
     this.sql.exec('INSERT OR IGNORE INTO squad_members (squad_id, profile_id, joined_at) VALUES (?,?,?)', sq.id, profileId, Date.now());
     this.sql.exec('UPDATE profiles SET squad_id = ? WHERE id = ?', sq.id, profileId);
     return this.getSquad(c);

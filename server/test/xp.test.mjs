@@ -63,15 +63,14 @@ test("applyEvent scores known kinds and enforces per-kind + XP-per-minute caps",
   assert.equal(over.ok, false);
   assert.equal(over.reason, "rate_kind");
 
+  // XP-per-minute cap: 24 dodges (72) + 15 power gems (150) + diamonds trip the 250 cap
   let xpWin = createXpWindow();
-  // Fill the XP cap with boss events (100 each, cap 250 → 2 ok, 3rd trips xp cap)
-  let r1 = applyEvent(xpWin, { kind: "boss" }, now);
-  let r2 = applyEvent(r1.window, { kind: "boss" }, now + 1);
-  assert.equal(r1.ok && r2.ok, true);
-  // boss cap is 2/min so a third boss is rate_kind; use mission xp to trip rate_xp
-  const r3 = applyEvent(r2.window, { kind: "mission", xp: 80 }, now + 2);
-  assert.equal(r3.ok, false);
-  assert.equal(r3.reason, "rate_xp");
+  for (let i = 0; i < 24; i++) xpWin = applyEvent(xpWin, { kind: "dodge" }, now + i).window;
+  for (let i = 0; i < 15; i++) xpWin = applyEvent(xpWin, { kind: "power" }, now + 50 + i).window;
+  const reasons = [];
+  for (let i = 0; i < 10; i++) { const r = applyEvent(xpWin, { kind: "diamond" }, now + 100 + i); xpWin = r.window; reasons.push(r.reason); }
+  assert.ok(reasons.includes("rate_xp"));
+  assert.ok(xpWin.xp <= CAPS_PER_MINUTE.xp);
 });
 
 test("scoreValidatedEvent ties digs to the shared map and ignores unknown kinds", () => {
@@ -102,4 +101,28 @@ test("window prunes events older than 60s so caps reset", () => {
   assert.equal(applyEvent(win, { kind: "hit" }, t0 + 100).ok, false);
   const later = applyEvent(win, { kind: "hit" }, t0 + 60_001);
   assert.equal(later.ok, true);
+});
+
+test("mission/boss XP is never taken from the client (server awards it on completion)", () => {
+  const now = 2_000_000;
+  const m = applyEvent(createXpWindow(), { kind: "mission", xp: 250, boss: true }, now);
+  assert.equal(m.ok, true);
+  assert.equal(m.xp, 0);
+  let w = createXpWindow();
+  for (let i = 0; i < CAPS_PER_MINUTE.boss; i++) w = applyEvent(w, { kind: "boss", xp: 999 }, now + i).window;
+  assert.equal(applyEvent(w, { kind: "boss" }, now + 9).reason, "rate_kind");
+  assert.equal(w.xp, 0);
+});
+
+test("diamond/power/relic must reference a tile this session just dug, once per kind", () => {
+  const recentDigs = new Map([["4,30", { by: "s1", t: 1000, claimed: new Set() }]]);
+  const base = { recentDigs, sessionId: "s1", now: 2000, window: createXpWindow() };
+  const ok = scoreValidatedEvent({ kind: "diamond", x: 4, y: 30 }, base);
+  assert.equal(ok.ok, true);
+  assert.equal(ok.xp, XP.DIAMOND);
+  assert.equal(scoreValidatedEvent({ kind: "diamond", x: 4, y: 30 }, { ...base, window: ok.window }).reason, "already_claimed");
+  assert.equal(scoreValidatedEvent({ kind: "relic", x: 4, y: 30 }, { ...base, window: ok.window }).ok, true);
+  assert.equal(scoreValidatedEvent({ kind: "power", x: 4, y: 30 }, { ...base, sessionId: "s2" }).reason, "not_your_dig");
+  assert.equal(scoreValidatedEvent({ kind: "power", x: 9, y: 9 }, base).reason, "not_your_dig");
+  assert.equal(scoreValidatedEvent({ kind: "power", x: 4, y: 30 }, { ...base, now: 1000 + 16_000 }).reason, "not_your_dig");
 });

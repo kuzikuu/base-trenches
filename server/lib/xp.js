@@ -38,6 +38,14 @@ export const EVENT_KINDS = new Set([
   'dig', 'dodge', 'hit', 'survive', 'relic', 'mission', 'boss', 'diamond', 'power', 'depth'
 ]);
 
+// XP for these comes from the server-side campaign definition, and only when
+// Profiles actually completes the mission. The room only rate-limits them.
+export const SERVER_XP_KINDS = new Set(['mission', 'boss']);
+// Rewards found inside a tile (diamond / power gem / relic) must reference a tile
+// this same session dug in the last REWARD_WINDOW_MS, once per kind per tile.
+export const REWARD_KINDS = new Set(['diamond', 'power', 'relic']);
+export const REWARD_WINDOW_MS = 15_000;
+
 export function createXpWindow() {
   return { events: [], xp: 0 };
 }
@@ -63,8 +71,9 @@ export function xpForKind(kind, extra = {}) {
     case 'hit': return XP.HIT;
     case 'survive': return XP.SURVIVE;
     case 'relic': return XP.RELIC;
-    case 'mission': return extra.boss ? XP.BOSS : (Number(extra.xp) || XP.MISSION);
-    case 'boss': return XP.BOSS;
+    // Never trust a client-supplied amount: mission/boss XP is awarded by Profiles.
+    case 'mission': return 0;
+    case 'boss': return 0;
     default: return 0;
   }
 }
@@ -110,6 +119,22 @@ export function validateDepth({ depth, lastAwarded = 0, playerY } = {}) {
 }
 
 /**
+ * A reward (diamond / power / relic) must name a tile dug by this session within
+ * REWARD_WINDOW_MS that has not already paid out that reward kind.
+ * recentDigs: Map tileKey -> { by, t, claimed: Set<kind> }
+ */
+export function validateReward({ recentDigs, sessionId, kind, x, y, now = Date.now() } = {}) {
+  const bx = Math.floor(Number(x));
+  const by = Math.floor(Number(y));
+  if (!Number.isFinite(bx) || !Number.isFinite(by)) return { ok: false, reason: 'bad_tile' };
+  const key = tileKey(bx, by);
+  const rec = recentDigs && recentDigs.get(key);
+  if (!rec || rec.by !== sessionId || now - rec.t > REWARD_WINDOW_MS) return { ok: false, reason: 'not_your_dig' };
+  if (rec.claimed && rec.claimed.has(kind)) return { ok: false, reason: 'already_claimed' };
+  return { ok: true, key, rec };
+}
+
+/**
  * Apply a scored event to a rolling window. Returns { ok, xp, reason, window }.
  * `precheck` may already have rejected map/depth/mission rules.
  */
@@ -122,7 +147,7 @@ export function applyEvent(win, event, now = Date.now()) {
     return { ok: false, reason: 'rate_kind', xp: 0, window: win };
   }
   const xp = Math.max(0, Math.floor(xpForKind(kind, event)));
-  if (!xp && kind !== 'hit') return { ok: false, reason: 'no_xp', xp: 0, window: win };
+  if (!xp && kind !== 'hit' && !SERVER_XP_KINDS.has(kind)) return { ok: false, reason: 'no_xp', xp: 0, window: win };
   if (win.xp + xp > CAPS_PER_MINUTE.xp) {
     return { ok: false, reason: 'rate_xp', xp: 0, window: win };
   }
@@ -138,7 +163,14 @@ export function applyEvent(win, event, now = Date.now()) {
 export function scoreValidatedEvent(event, ctx = {}) {
   const now = ctx.now != null ? ctx.now : Date.now();
   const kind = event && event.kind;
-  if (kind === 'dig' || kind === 'diamond' || kind === 'power' || kind === 'relic') {
+  if (REWARD_KINDS.has(kind)) {
+    const r = validateReward({ recentDigs: ctx.recentDigs, sessionId: ctx.sessionId, kind, x: event.x, y: event.y, now });
+    if (!r.ok) return { ok: false, reason: r.reason, xp: 0, window: ctx.window };
+    const out = applyEvent(ctx.window, event, now);
+    if (out.ok) { r.rec.claimed = r.rec.claimed || new Set(); r.rec.claimed.add(kind); }
+    return out;
+  }
+  if (kind === 'dig') {
     const dig = validateDig({
       dugSet: ctx.dugSet,
       x: event.x,

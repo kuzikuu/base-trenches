@@ -207,6 +207,7 @@ function dig(){
     if(typeof Haptics!=='undefined')Haptics.notification('success');
     if(typeof RPG!=='undefined'){
       RPG.addXp(5,'diamond');
+      if(typeof Multiplayer!=='undefined')Multiplayer.sendEvent({kind:'diamond',x,y});
       if(typeof Multiplayer==='undefined'||!Multiplayer.connected)RPG.tryGearDrop(maxDepth);
     }
     // Rare relic find on a gem at depth
@@ -222,6 +223,7 @@ function dig(){
     if(typeof Haptics!=='undefined')Haptics.notification('success');
     if(typeof RPG!=='undefined'){
       RPG.addXp(10,'power');
+      if(typeof Multiplayer!=='undefined')Multiplayer.sendEvent({kind:'power',x,y});
       if(typeof Multiplayer==='undefined'||!Multiplayer.connected)RPG.tryGearDrop(maxDepth);
     }
     const s=seams.find(s=>x>=s.x&&x<s.x+3&&y>=s.y&&y<s.y+3);

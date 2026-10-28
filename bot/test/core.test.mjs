@@ -222,3 +222,40 @@ test("owner-only /setpost and price refresh tracks ATH and x", async () => {
   await msg(1, "/linkx @Caller_One");
   assert.equal(bot.apiCallers().items.find((x) => x.telegram_handle === "@user1").x_handle, "@Caller_One");
 });
+
+test("events cron: one post per milestone, no 1h post when already close, capped per run", async () => {
+  const db = await openDb();
+  const sent = [];
+  let now = Date.UTC(2026, 9, 28, 4, 0, 0);
+  const mk = (id, startMin) => ({ id, title: id, type: "raid", start_at: now + startMin * 60_000, end_at: now + (startMin + 60) * 60_000 });
+  const events = { live: [], upcoming: [mk("soon10", 10), mk("in50", 50), mk("a", 45), mk("b", 46), mk("c", 47)], past: [] };
+  const bot = new Bot({
+    db, tg: async (method, params) => { sent.push({ method, params }); return { message_id: 1 }; },
+    fetchJson: async () => events, now: () => now, groupId: GROUP, channelId: CHANNEL, eventsUrl: "https://server.test/events",
+  });
+  const r1 = await bot.announceDueEvents();
+  assert.equal(r1.sent.length, 3, "at most 3 posts per run");
+  assert.ok(!r1.sent.some((s) => s.id === "soon10"), "10 minutes out: no 'in one hour' post");
+  const r2 = await bot.announceDueEvents();
+  assert.ok(r2.sent.every((s) => !r1.sent.some((x) => x.id === s.id && x.when === s.when)), "never repeats");
+  const again = await bot.announceDueEvents();
+  assert.equal(again.sent.length, 0);
+  now += 11 * 60_000; // soon10 has started
+  events.live = [events.upcoming.shift()];
+  const r3 = await bot.announceDueEvents();
+  assert.deepEqual(r3.sent, [{ id: "soon10", when: "start" }]);
+  assert.equal((await bot.announceDueEvents()).sent.length, 0);
+  assert.equal(sent.filter((s) => /soon10/.test(s.params.text)).length, 2, "start post goes to group + channel once");
+});
+
+test("anonymous-admin /tag gets one rate-limited hint; other commands stay silent", async () => {
+  const { bot, sent } = await setup();
+  const anon = (text, id) => bot.handleUpdate({ update_id: 900 + id, message: { message_id: 900 + id, chat: { id: GROUP, type: "supergroup" }, sender_chat: { id: GROUP, type: "supergroup" }, from: { id: 1087968824, is_bot: true, username: "GroupAnonymousBot" }, text } });
+  await anon("/hot", 1);
+  assert.equal(sent.length, 0);
+  await anon(`/tag ${CA}`, 2);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].params.text, /Send as/);
+  await anon(`/tag ${CA}`, 3);
+  assert.equal(sent.length, 1);
+});

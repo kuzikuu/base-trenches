@@ -249,7 +249,8 @@ export class Bot {
     const text = m.text || m.caption || "";
     let c = parseCommand(text, this.botUsername);
     if (m.sender_chat) {
-      if (c && !c.foreign) return this.warnSendAs(m);
+      // Anonymous admin / "send as group or channel": only identity-bound commands get the hint.
+      if (c && !c.foreign && ["tag", "me", "linkx"].includes(c.cmd) && inGroup) return this.warnSendAs(m);
       return null;
     }
     if (!m.from || m.from.is_bot) return null;
@@ -510,29 +511,36 @@ export class Bot {
     return this.reply(m, parts.join("\n\n"));
   }
 
+  // Called from the 10-minute cron. Each event gets at most one "in one hour" and one
+  // "starting now" post; the kv marker is written *before* sending so overlapping runs
+  // can't double-post, and at most MAX_EVENT_POSTS go out per run.
   async announceDueEvents() {
+    const MAX_EVENT_POSTS = 3;
     const { upcoming, live } = await this.fetchEvents();
     const t = this.now();
-    const hour = 3600_000;
+    const hour = 3600_000, startWindow = 15 * 60_000;
     const sent = [];
-    const all = [...upcoming, ...live];
-    for (const e of all) {
-      if (!e || !e.id || !e.start_at) continue;
-      const start = Number(e.start_at);
+    const seen = new Set();
+    const opts = { parse_mode: "HTML", link_preview_options: { is_disabled: true } };
+    for (const e of [...live, ...upcoming]) {
+      if (sent.length >= MAX_EVENT_POSTS) break;
+      if (!e || !e.id || seen.has(e.id)) continue;
+      seen.add(e.id);
+      const start = Number(e.start_at), end = Number(e.end_at);
+      if (!Number.isFinite(start)) continue;
       const key1h = "event_announced:" + e.id + ":1h";
       const keyStart = "event_announced:" + e.id + ":start";
-      if (start - hour <= t && t < start && !kvGet(this.db, key1h)) {
-        const html = `In one hour: ${this.eventLine(e)}\n<a href="${LINKS.site}/#events">EVENTS</a>`;
-        await this.safeTg("sendMessage", { chat_id: this.voteChatId, text: html, parse_mode: "HTML", link_preview_options: { is_disabled: true } });
+      // "In one hour" only when it is still 20+ minutes away; otherwise the start post covers it.
+      if (start - hour <= t && start - t >= 20 * 60_000 && !kvGet(this.db, key1h)) {
         kvSet(this.db, key1h, t);
+        await this.safeTg("sendMessage", { chat_id: this.voteChatId, text: `In one hour: ${this.eventLine(e)}\n<a href="${LINKS.site}/#events">EVENTS</a>`, ...opts });
         sent.push({ id: e.id, when: "1h" });
-      }
-      if (start <= t && t < start + 15 * 60_000 && !kvGet(this.db, keyStart)) {
-        const html = `Starting now: ${this.eventLine(e)}\n<a href="${LINKS.site}/#events">EVENTS</a>`;
-        const opts = { text: html, parse_mode: "HTML", link_preview_options: { is_disabled: true } };
-        await this.safeTg("sendMessage", { chat_id: this.voteChatId, ...opts });
-        await this.safeTg("sendMessage", { chat_id: this.announceChatId, ...opts });
+      } else if (start <= t && t < start + startWindow && (!Number.isFinite(end) || t <= end) && !kvGet(this.db, keyStart)) {
         kvSet(this.db, keyStart, t);
+        kvSet(this.db, key1h, kvGet(this.db, key1h) || t);
+        const text = `Starting now: ${this.eventLine(e)}\n<a href="${LINKS.site}/#events">EVENTS</a>`;
+        await this.safeTg("sendMessage", { chat_id: this.voteChatId, text, ...opts });
+        if (this.announceChatId && this.announceChatId !== this.voteChatId) await this.safeTg("sendMessage", { chat_id: this.announceChatId, text, ...opts });
         sent.push({ id: e.id, when: "start" });
       }
     }
