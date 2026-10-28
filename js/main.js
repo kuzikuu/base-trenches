@@ -470,7 +470,8 @@ Promise.all([
     // Signal mini-app host that we're ready
     MiniApp.ready();
     // Show username greeting if available
-    const username=MiniApp.getUsername();
+    const tgU=(typeof BTTelegram!=='undefined'&&BTTelegram.user())||null;
+    const username=MiniApp.getUsername()||(tgU&&(tgU.username||tgU.first_name))||null;
     const profile=RPG.getProfile();
     if(username){
       $("#greeting").textContent="WELCOME "+username.toUpperCase();

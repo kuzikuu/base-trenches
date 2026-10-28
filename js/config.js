@@ -28,6 +28,8 @@ window.BT_CONFIG = {
   privyAppId: window.BT_PRIVY_APP_ID,
   privyClientId: window.BT_PRIVY_CLIENT_ID,
   privyChainId: 8453,
+  // Public Telegram bot id (@Powerof9BaseBot) for the Login Widget popup; Privy's app config wins if present.
+  telegramBotId: '9029141994',
 
   // Community links
   links: {

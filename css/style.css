@@ -410,3 +410,11 @@ button.ghost{background:#fff;color:var(--blue);border:2px solid var(--blue);font
   .event-banner{top:172px;bottom:auto;left:8px;right:8px;max-width:none;transform:none;text-align:left}
   .dugout{flex-direction:column;gap:6px}
 }
+/* Telegram Mini App: fit the stable Telegram viewport, no rubber-band scroll, no text selection while using the pad */
+html.tg-miniapp,html.tg-miniapp body{height:var(--tg-vh,100%);overscroll-behavior:none}
+html.tg-miniapp body{box-sizing:border-box;-webkit-user-select:none;user-select:none;touch-action:manipulation}
+html.tg-miniapp #touch{bottom:calc(40px + var(--safe-bottom))}
+html.tg-miniapp input,html.tg-miniapp textarea{-webkit-user-select:text;user-select:text}
+.login-methods .tg-primary{order:-1}
+.login-fc{display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+.login-fc a{color:var(--blue);word-break:break-all}
