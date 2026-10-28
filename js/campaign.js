@@ -77,7 +77,28 @@ const CHAPTERS = [
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 
 function emptyProgress() {
-  return { completed: {}, stats: { depth: 0, survive: 0, dodge: 0, relic: 0, squad: 0, boss: 0 }, titles: [] };
+  return { completed: {}, stats: { depth: 0, survive: 0, dodge: 0, relic: 0, squad: 0, boss: 0 }, titles: [], maxLevel: 1, levelStats: {} };
+}
+
+// Levels 2+ each have their own generated campaign (shared code: js/levels.js).
+let levelsOn = false;
+function setLevelsEnabled(on) { levelsOn = !!on; }
+function allChapters() {
+  if (!levelsOn || typeof BTLevels === 'undefined') return CHAPTERS;
+  const top = Math.max(2, (progress.maxLevel || 1) + 1);
+  const out = CHAPTERS.slice();
+  for (let L = Math.max(2, top - 11); L <= top; L++) out.push(BTLevels.levelChapter(L));
+  return out;
+}
+function chapterOpen(ch) {
+  if (ch.level >= 2) return (progress.maxLevel || 1) >= ch.level;
+  const prev = CHAPTERS[ch.index - 1];
+  return !prev || prev.missions.filter(m => m.boss).every(m => progress.completed[m.id]);
+}
+function statFor(m) {
+  const key = m.type === 'dig' ? 'depth' : m.type;
+  if (m.scope === 'level') return ((progress.levelStats || {})[m.level] || {})[key] || 0;
+  return progress.stats[key] || 0;
 }
 
 let progress = emptyProgress();
@@ -92,9 +113,8 @@ function banner(text) {
 }
 
 function readyBoss() {
-  for (const ch of CHAPTERS) {
-    const prev = CHAPTERS[ch.index - 1];
-    if (prev && !prev.missions.filter(m => m.boss).every(m => progress.completed[m.id])) return null;
+  for (const ch of allChapters()) {
+    if (!chapterOpen(ch)) { if (ch.level >= 2) continue; return null; }
     const boss = ch.missions.find(m => m.boss);
     if (!boss || progress.completed[boss.id]) continue;
     const others = ch.missions.filter(m => !m.boss);
@@ -107,17 +127,26 @@ function applyServer(pub) {
   if (!pub) return;
   if (pub.stats) progress.stats = { ...progress.stats, ...pub.stats };
   if (Array.isArray(pub.titles)) progress.titles = pub.titles;
+  if (pub.maxLevel) progress.maxLevel = Math.max(progress.maxLevel || 1, pub.maxLevel);
+  if (pub.levelStats) progress.levelStats = pub.levelStats;
   if (pub.chapters) {
     progress.completed = {};
     pub.chapters.forEach(ch => (ch.missions || []).forEach(m => { if (m.done) progress.completed[m.id] = true; }));
   }
 }
 
-function note(kind, amount) {
+function note(kind, amount, level) {
+  const L = Math.max(1, Math.floor(level || 1));
+  if (L > (progress.maxLevel || 1)) progress.maxLevel = L;
+  if (L >= 2 && (kind === 'survive' || kind === 'dodge' || kind === 'relic')) {
+    const ls = progress.levelStats[L] || (progress.levelStats[L] = { survive: 0, dodge: 0, relic: 0 });
+    ls[kind] = (ls[kind] || 0) + (amount || 1);
+  }
   if (kind === 'depth' || kind === 'dig') {
     const n = Number(amount) || 0;
     if (n > session.depth) session.depth = n;
     if (n > (progress.stats.depth || 0)) progress.stats.depth = n;
+    tryComplete();
     return;
   }
   if (kind === 'survive' || kind === 'dodge' || kind === 'relic' || kind === 'squad' || kind === 'boss') {
@@ -137,15 +166,13 @@ function note(kind, amount) {
 
 function tryComplete() {
   const profile = typeof RPG !== 'undefined' ? RPG.getProfile() : null;
-  for (const ch of CHAPTERS) {
-    const prev = CHAPTERS[ch.index - 1];
-    if (prev && !prev.missions.filter(m => m.boss).every(m => progress.completed[m.id])) continue;
+  for (const ch of allChapters()) {
+    if (!chapterOpen(ch)) continue;
     for (const m of ch.missions) {
       if (progress.completed[m.id]) continue;
       const idx = ch.missions.indexOf(m);
       if (ch.missions.slice(0, idx).some(x => !progress.completed[x.id])) break;
-      const key = m.type === 'dig' ? 'depth' : m.type;
-      if ((progress.stats[key] || 0) < m.target) break;
+      if (statFor(m) < m.target) break;
       if (typeof Multiplayer !== 'undefined' && Multiplayer.connected) {
         // Wait for the server's answer instead of re-sending on every dig.
         if (sentAt[m.id] && Date.now() - sentAt[m.id] < 15000) break;
@@ -163,17 +190,18 @@ function tryComplete() {
 function renderMap() {
   const titles = (progress.titles || []).map(t => `<span class="title-chip">${esc(t)}</span>`).join('') || '<span class="empty">NO TITLES YET</span>';
   const stats = progress.stats || {};
-  let html = `<p class="note">Five chapters. Dig, survive the barrages, find the relics, hit the squad mark, then the boss raid. Progress is saved on the server.</p>
+  const chapters = allChapters();
+  let html = `<p class="note">${levelsOn ? 'Campaign 1 is five chapters. Every level below it has its own campaign. Break the floor of a level to drop into the next.' : 'Five chapters.'} Dig, survive the barrages, find the relics, hit the squad mark, then the boss raid. Progress is saved on the server.</p>
     <div class="campaign-titles">${titles}</div>
     <div class="campaign-stats">DEPTH ${stats.depth||0}M · SURVIVED ${stats.survive||0} · DODGES ${stats.dodge||0} · RELICS ${stats.relic||0}</div>
     <div class="trench-map">`;
-  CHAPTERS.forEach((ch, i) => {
-    const prev = CHAPTERS[i - 1];
-    const unlocked = i === 0 || (prev && prev.missions.filter(m => m.boss).every(m => progress.completed[m.id]));
+  chapters.forEach((ch, i) => {
+    const unlocked = chapterOpen(ch);
+    if (ch.level === 2) html += `<div class="level-divider dotmatrix">▼ BELOW CAMPAIGN 1 · ENDLESS LEVELS</div>`;
     const done = ch.missions.every(m => progress.completed[m.id]);
     const nDone = ch.missions.filter(m => progress.completed[m.id]).length;
     html += `<div class="dugout ${unlocked ? 'open' : 'locked'} ${done ? 'cleared' : ''}">
-      <div class="dugout-mark">${String(i + 1).padStart(2, '0')}</div>
+      <div class="dugout-mark">${ch.level >= 2 ? 'L' + ch.level : String(i + 1).padStart(2, '0')}</div>
       <div class="dugout-body">
         <h3 class="dotmatrix">${esc(ch.name.toUpperCase())}</h3>
         <p>${esc(ch.brief)}</p>
@@ -183,14 +211,14 @@ function renderMap() {
       html += `<div class="mission ${ok ? 'done' : ''} ${m.boss ? 'boss' : ''}">
         <span class="tick">${ok ? '■' : '□'}</span>
         <span class="mtitle">${m.boss ? 'RAID · ' : ''}${esc(m.title)}</span>
-        <span class="mdesc">${esc(m.desc)}</span>
+        <span class="mdesc">${esc(m.desc)}${m.scope === 'level' && !ok ? ` (${statFor(m)}/${m.target})` : ''}</span>
       </div>`;
     });
     html += `</div>
         <div class="dugout-foot">${nDone}/${ch.missions.length} · REWARD <b>${esc(ch.rewards.title)}</b> + ${esc(ch.rewards.gear.name)}</div>
       </div>
     </div>`;
-    if (i < CHAPTERS.length - 1) html += `<div class="trench-link ${unlocked ? 'open' : ''}"></div>`;
+    if (i < chapters.length - 1 && chapters[i + 1].level !== 2) html += `<div class="trench-link ${unlocked ? 'open' : ''}"></div>`;
   });
   html += `</div>`;
   return html;
@@ -202,6 +230,8 @@ window.Campaign = {
   applyServer,
   tryComplete,
   renderMap,
+  setLevelsEnabled,
+  allChapters,
   getProgress: () => progress,
   session
 };

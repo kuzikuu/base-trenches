@@ -1,7 +1,7 @@
 // Wiring: loader, navigation, panels, HUD, touch controls, mini-app + haptics + RPG + multiplayer.
 (function(){
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
-const TITLES={hot:"HOT LIST",calls:"CALLS",callers:"CALLERS",about:"ABOUT",inventory:"GEAR",leaderboard:"RANKS",campaign:"CAMPAIGN",events:"EVENTS",squad:"SQUAD",world:"WORLD MAP"};
+const TITLES={hot:"HOT LIST",calls:"CALLS",callers:"CALLERS",about:"ABOUT",inventory:"GEAR",skills:"SKILLS",leaderboard:"RANKS",campaign:"CAMPAIGN",events:"EVENTS",squad:"SQUAD",world:"WORLD MAP"};
 let current=null,wasPlaying=false,lastStats=null;
 const touch=matchMedia("(pointer:coarse)").matches||"ontouchstart" in window;
 
@@ -21,6 +21,8 @@ function onHud(h){
   if(m.textContent!==txt){m.textContent=txt;m.classList.remove("pop");void m.offsetWidth;m.classList.add("pop")}
   $("#depth").textContent="DEPTH "+h.depth+"M";
   $("#goalfill").style.width=(h.goal*100).toFixed(1)+"%";
+  const lc=$("#lvlChip");
+  if(lc){lc.classList.toggle("hidden",!h.levelsOn);if(h.levelsOn)lc.textContent="L"+h.level+(h.theme?" · "+h.theme.toUpperCase():"")}
   // Update online count
   if(typeof Multiplayer!=='undefined'){
     paintOnline();
@@ -48,9 +50,17 @@ function onOver(s){
   const lvl=profile?` · LEVEL ${profile.level}`:'';
   $("#overStats").innerHTML=`MULTIPLIER <b>x${s.mult.toFixed(2)}</b><br>DEPTH ${s.depth}M · GEMS ${s.gems} · DIGS ${s.digs||0}${lvl}<br>BEST x${(+s.best).toFixed(2)} · GOAL 589x`;
   $("#over").classList.remove("hidden");
+  $("#checkpointBtn").classList.add("hidden");$("#overSave").classList.add("hidden");
   lastStats=s;
+  if(typeof BTSave!=='undefined')BTSave.onDeath();
 }
-Game.init($("#game"),{onHud,onHit,onOver,onHint:t=>hint(t),onOpen:id=>openPanel(id)});
+function onLevelEnter(L,theme,down){
+  if(!down||L<2)return;
+  Haptics.notification('success');
+  if(typeof BTSave!=='undefined'&&RPG.isLoggedIn())setTimeout(()=>BTSave.saveNow({quiet:true}),1500);
+  hint(`LEVEL ${L}: ${theme?theme.campaign.toUpperCase()+" CAMPAIGN · ":""}DARKER, HARDER, RAIDERS ABOUT`,6000);
+}
+Game.init($("#game"),{onHud,onHit,onOver,onLevelEnter,onHint:t=>hint(t),onOpen:id=>openPanel(id)});
 
 async function start(){
   $("#title").classList.add("hidden");$("#over").classList.add("hidden");$("#hud").classList.remove("hidden");
@@ -65,6 +75,42 @@ async function start(){
   if(!touch)hint("SPACE TO DIG · ARROWS TO MOVE · ↓+SPACE DIGS DOWN",4500);else hint("⛏ DIG · ▼+⛏ DIGS DOWN",4000);
 }
 $("#startBtn").onclick=start;
+// Save game: CONTINUE on the title, CHECKPOINT after a death on level 2+, SAVE in the HUD.
+async function continueGame(){
+  if(typeof BTSave==='undefined'||!BTSave.save)return start();
+  $("#title").classList.add("hidden");$("#over").classList.add("hidden");$("#hud").classList.remove("hidden");
+  if(touch)$("#touch").classList.remove("hidden");
+  BTSave.continueRun();updateRpgHud();
+  hint("WELCOME BACK · "+BTSave.describe(BTSave.save),4000);
+}
+$("#continueBtn").onclick=continueGame;
+$("#checkpointBtn").onclick=continueGame;
+$("#saveBtn").onclick=e=>{e.stopPropagation();Haptics.selection();if(typeof BTSave!=='undefined')BTSave.saveNow()};
+function paintContinue(sv){
+  const b=$("#continueBtn");if(!b)return;
+  b.classList.toggle("hidden",!sv);
+  if(sv)b.textContent="▶ CONTINUE · "+BTSave.describe(sv);
+  $("#startBtn").textContent=sv?"▶ NEW RUN":"▶ START DIGGING";
+}
+if(typeof BTSave!=='undefined'){
+  BTSave.init();
+  BTSave.on((ev,data)=>{
+    if(ev==='save'){paintContinue(data);return}
+    if(ev==='login'){toast("Log in to save your run. It saves as soon as you're in.",4500);return}
+    if(ev==='error'){
+      const m={no_run:"Start a run first",login_required:"Log in to save",too_soon:"Saved a moment ago",offline:"Save failed: server unreachable",levels_locked:"Deeper levels are not open yet"};
+      toast(m[data]||"Save failed ("+data+")");return}
+    if(ev==='saved'){
+      const sv=data.save;paintContinue(sv);
+      if(Game.mode==="over"){
+        if(sv&&sv.checkpoint){$("#checkpointBtn").classList.remove("hidden");$("#checkpointBtn").textContent="▶ CHECKPOINT · LV "+sv.level;
+          $("#overSave").innerHTML="Your account keeps a checkpoint at the top of <b>level "+sv.level+"</b>.";$("#overSave").classList.remove("hidden")}
+        return}
+      if(!data.quiet){const btn=$("#saveBtn");btn.classList.remove("ok");void btn.offsetWidth;btn.classList.add("ok");
+        toast("SAVED · "+BTSave.describe(sv)+(data.clamped&&data.clamped.length?" · some unverified stats were trimmed":""))}
+    }
+  });
+}
 addEventListener("hashchange",()=>{const h=location.hash.slice(1);if(TITLES[h])openPanel(h);else if(!h&&current)closePanel()});
 $("#retryBtn").onclick=start;
 addEventListener("keydown",e=>{
@@ -92,6 +138,7 @@ $("#shareBtn").onclick=()=>{if(lastStats)MiniApp.shareScore(lastStats.mult,lastS
 function updateRpgHud(){
   const profile=RPG.getProfile();
   if(!profile)return;
+  const bb=$("#buildBtn");if(bb)bb.classList.toggle("hidden",!(Game.skillFx&&Game.skillFx.fortifyCooldown));
   const {level,xpInLevel,xpForNext}=BT_CONFIG.levelFromXp(profile.xp);
   $("#level").textContent=`LV ${level}`;
   $("#xpfill").style.width=((xpInLevel/xpForNext)*100).toFixed(1)+"%";
@@ -188,6 +235,8 @@ function openPanel(id){
   // Render appropriate content
   if(id==='inventory'){
     $("#panelBody").innerHTML=renderInventory();
+  }else if(id==='skills'){
+    $("#panelBody").innerHTML=typeof BTSkillTree!=='undefined'?BTSkillTree.render():'<p class="note">Skills loading…</p>';
   }else if(id==='leaderboard'){
     $("#panelBody").innerHTML='<p class="note">Loading...</p>';
     renderLeaderboard();
@@ -301,6 +350,7 @@ async function renderLeaderboard(){
       <div class="lb-tabs">
         <button data-lb="xp" class="${type==='xp'?'on':''}">BY XP</button>
         <button data-lb="depth" class="${type==='depth'?'on':''}">BY DEPTH</button>
+        ${typeof BTSave!=='undefined'&&BTSave.config.levelsUnlocked?`<button data-lb="level" class="${type==='level'?'on':''}">BY LEVEL</button>`:''}
         <button data-lb="squad" class="${type==='squad'?'on':''}">SQUADS</button>
       </div>
     `;
@@ -314,7 +364,7 @@ async function renderLeaderboard(){
         const rankClass=rank===1?'gold':rank===2?'silver':rank===3?'bronze':'';
         const isMe=profile&&row.id===profile.id;
         const pfpHtml=row.pfp?`<img src="${escHtml(row.pfp)}" alt="">`:'';
-        const value=type==='depth'?`${row.best_depth}M`:type==='squad'?`${row.xp} SXP`: `${row.xp} XP`;
+        const value=type==='depth'?`${row.best_depth}M`:type==='level'?`L${row.max_level||1} · ${row.best_depth}M`:type==='squad'?`${row.xp} SXP`: `${row.xp} XP`;
         const extra=row.x_handle?` <span class="sub">${escHtml(row.x_handle)}</span>`:'';
         html+=`<div class="lb-row ${rank<=3?'top3':''} ${isMe?'equipped':''}">
           <div class="lb-rank ${rankClass}">#${rank}</div>
@@ -432,6 +482,8 @@ document.addEventListener("click",e=>{
   if(n){e.preventDefault();const id=n.dataset.nav;
     if(id==="play"){closePanel();$("#menu").classList.remove("open");if(Game.mode!=="play")start();return}
     openPanel(id);return}
+  if(current==="skills"&&typeof BTSkillTree!=='undefined'&&e.target.closest("[data-learn],[data-skreset]")){
+    BTSkillTree.onClick(e,()=>{if(current==="skills")openPanel("skills")});return}
   const c=e.target.closest("[data-caller]");
   if(c){e.preventDefault();BT.state.callerFilter=c.dataset.caller;openPanel("calls");return}
   if(e.target.closest("[data-clearfilter]")){BT.state.callerFilter=null;openPanel("calls");return}
@@ -475,7 +527,10 @@ Promise.all([
   
   // Connect to multiplayer
   const profile=RPG.getProfile();
-  if(profile){
+  if(typeof BTSave!=='undefined'){
+    BTSave.loadConfig().then(()=>{if(current==='campaign')openPanel('campaign')});
+    BTSave.fetchSave().then(sv=>{if(sv&&sv.sector)Multiplayer.setRoom(sv.sector)}).finally(()=>{if(profile)Multiplayer.connect(profile)});
+  }else if(profile){
     Multiplayer.connect(profile);
   }
   if(typeof BTEvents!=='undefined')BTEvents.start();
@@ -545,6 +600,7 @@ if(typeof BTPrivy!=='undefined'&&BTPrivy.enabled()){
       Multiplayer.disconnect();
       Multiplayer.connect(RPG.getProfile());
       updateRpgHud();
+      if(typeof BTSave!=='undefined')BTSave.afterLogin();
     }
     updateRpgHud();
   });

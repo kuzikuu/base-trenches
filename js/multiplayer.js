@@ -22,10 +22,13 @@ let statusCallbacks = [];
 
 let roster = [];
 let rosterCallbacks = [];
+// Save game: reconnect to the sector you saved in (falls back to 'main' if it fails once).
+let roomOverride = null;
+let savedCallbacks = [];
 
 async function getWsUrl(profile) {
   const base = BT_CONFIG.serverUrl.replace(/^http/, 'ws');
-  const q = new URLSearchParams({ room: 'main' });
+  const q = new URLSearchParams({ room: roomOverride && /^main(-[2-8])?$/.test(roomOverride) ? roomOverride : 'main' });
   // Credentials let the server credit XP to this profile (browsers can't set WS headers)
   const token = profile && typeof RPG !== 'undefined' ? await RPG.getAuthToken() : null;
   if (token) {
@@ -90,6 +93,7 @@ async function connect(profile) {
     console.log('[MP] Disconnected');
     connected = false;
     notifyStatus('disconnected');
+    if (roomOverride && !playerId) roomOverride = null; // sector unreachable: next try uses 'main'
     scheduleReconnect();
   };
   
@@ -215,6 +219,10 @@ function handleMessage(data) {
     case 'xp':
       if (typeof RPG !== 'undefined' && RPG.applyServerXp) RPG.applyServerXp(data);
       break;
+
+    case 'saved':
+      savedCallbacks.forEach(cb => { try { cb(data); } catch (e) {} });
+      break;
       
     case 'dig':
       if (data.playerId !== playerId) {
@@ -270,6 +278,20 @@ function sendEvent(event) {
   ws.send(JSON.stringify({ type: 'event', ...event }));
 }
 
+// Autosave over the socket. Push the current position first so the room's copy is fresh.
+function sendSave(snapshot) {
+  if (!connected || !ws || !snapshot) return false;
+  try {
+    ws.send(JSON.stringify({ type: 'state', x: Math.round(snapshot.x), y: Math.round(snapshot.y), vx: 0, vy: 0, face: 1, swing: 0, level: (RPG.getProfile() || {}).level || 1 }));
+    lastStateSent = Date.now();
+    ws.send(JSON.stringify({ type: 'save', snapshot }));
+    return true;
+  } catch (e) { return false; }
+}
+
+function setRoom(name) { roomOverride = name || null; }
+function onSaved(cb) { savedCallbacks.push(cb); }
+
 function sendChat(text) {
   if (!connected || !ws) return;
   ws.send(JSON.stringify({ type: 'chat', text }));
@@ -320,6 +342,10 @@ window.Multiplayer = {
   sendDig,
   sendEvent,
   sendChat,
+  sendSave,
+  setRoom,
+  get room() { return roomOverride || 'main'; },
+  onSaved,
   sendXp,
   flushXp,
   interpolatePlayers,

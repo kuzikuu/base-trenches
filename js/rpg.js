@@ -112,7 +112,8 @@ async function loadProfile() {
   if (typeof BTPrivy !== 'undefined' && BTPrivy.enabled()) {
     try { await BTPrivy.init(); } catch (e) {}
   }
-  const privy = applyPrivyIdentity();
+  const pt = previewTestId();
+  const privy = pt ? { did: 'did:privy:previewtest' + pt } : applyPrivyIdentity();
   
   const profileId = privy && privy.did
     ? privy.did
@@ -136,6 +137,7 @@ async function loadProfile() {
         }
         if (!profile.equipped) profile.equipped = {};
         if (!Array.isArray(profile.inventory)) profile.inventory = [];
+        applySkillFields(profile);
         if (data.campaign && typeof Campaign !== 'undefined') Campaign.applyServer(data.campaign);
         serverXpLocked = true;
         saveLocal();
@@ -180,7 +182,21 @@ async function loadProfile() {
   return profile;
 }
 
+// Preview builds only (window.BT_PREVIEW_TEST_AUTH): a test login the preview server accepts so
+// saves can be exercised without a real Privy session. The production server never accepts it.
+function previewTestId() {
+  if (window.BT_PREVIEW_TEST_AUTH !== true) return null;
+  try { const v = localStorage.getItem('bt_preview_test'); return v && /^[a-z0-9]{3,24}$/.test(v) ? v : null; } catch (e) { return null; }
+}
+let lastToken = null;
 async function getAuthToken() {
+  const pt = previewTestId();
+  if (pt && profile && profile.id === 'did:privy:previewtest' + pt) return (lastToken = 'preview-test:' + pt);
+  const t = await getAuthTokenInner();
+  if (t) lastToken = t;
+  return t;
+}
+async function getAuthTokenInner() {
   if (profile && profile.id && String(profile.id).startsWith('did:privy:') && typeof BTPrivy !== 'undefined') {
     try { return await BTPrivy.getAccessToken(); } catch (e) {}
   }
@@ -278,6 +294,7 @@ function applyServerProfile(next) {
   if (next.x_handle) profile.x_handle = next.x_handle;
   if (next.wallet) profile.wallet = next.wallet;
   if (Array.isArray(next.titles)) profile.titles = next.titles;
+  applySkillFields(next);
   if (next.campaign && typeof Campaign !== 'undefined') Campaign.applyServer({ ...next.campaign, titles: next.titles });
   serverXpLocked = true;
   if (next.level > oldLevel) {
@@ -305,6 +322,9 @@ function applyServerXp(result) {
   }
   if (result.campaign && typeof Campaign !== 'undefined') Campaign.applyServer(result.campaign);
   if (result.titles) profile.titles = result.titles;
+  if (typeof result.maxLevel === 'number') profile.max_level = Math.max(profile.max_level || 1, result.maxLevel);
+  if (typeof result.bestDepth === 'number') profile.best_depth = Math.max(profile.best_depth || 0, result.bestDepth);
+  if (typeof result.skillPoints === 'number') { profile.skill_points = result.skillPoints; profile.skill_points_free = Math.max(0, result.skillPoints - spent(profile.skills)); }
   serverXpLocked = true;
   if (profile.level > oldLevel) {
     levelUpCallbacks.forEach(cb => cb(profile.level, oldLevel));
@@ -312,6 +332,37 @@ function applyServerXp(result) {
     if (typeof Sfx !== 'undefined') Sfx.play('power');
   }
   saveLocal();
+}
+
+function spent(sk) { return sk ? Object.values(sk).reduce((a, b) => a + (Number(b) || 0), 0) : 0; }
+function applySkillFields(next) {
+  if (!next || !profile) return;
+  if (next.skills) profile.skills = next.skills;
+  if (typeof next.max_level === 'number') profile.max_level = next.max_level;
+  if (typeof next.skill_points === 'number') profile.skill_points = next.skill_points;
+  if (typeof next.skill_points_free === 'number') profile.skill_points_free = next.skill_points_free;
+  if (typeof next.has_save === 'boolean') profile.has_save = next.has_save;
+  if (typeof Game !== 'undefined' && Game.setSkills) Game.setSkills(profile.skills || {});
+}
+
+// Skill tree: the server checks points, prerequisites and level gates.
+async function skillAction(action, skill) {
+  if (!profile) return { ok: false, error: 'no_profile' };
+  const token = await getAuthToken();
+  const guest = !token && String(profile.id).startsWith('guest:');
+  const res = await fetch(`${BT_CONFIG.serverUrl}/api/skills`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(guest ? { 'X-Guest-Secret': getGuestSecret() } : {}) },
+    body: JSON.stringify({ id: profile.id, action, skill })
+  }).catch(() => null);
+  const data = res ? await res.json().catch(() => null) : null;
+  if (data && data.skills) {
+    profile.skills = data.skills;
+    if (typeof data.points === 'number') { profile.skill_points = data.points; profile.skill_points_free = Math.max(0, data.points - spent(data.skills)); }
+    if (typeof Game !== 'undefined' && Game.setSkills) Game.setSkills(profile.skills);
+    saveLocal();
+  }
+  return data || { ok: false, error: 'offline' };
 }
 
 function addXp(amount, source) {
@@ -501,6 +552,10 @@ window.RPG = {
   fetchLeaderboard,
   getProfile: () => profile,
   getAuthToken,
+  getCachedToken: () => lastToken,
+  isLoggedIn: () => !!(profile && profile.id && /^(did:privy:|fid:)/.test(String(profile.id))),
+  previewTestId,
+  skillAction,
   getGuestSecret,
   maybeMigrate,
   GEAR_TEMPLATES,
